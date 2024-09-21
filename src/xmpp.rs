@@ -22,9 +22,9 @@
 
 //! XMPP agent.
 
-use crate::types::Message;
+use crate::message::Message;
 use anyhow::anyhow;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use tokio::sync::mpsc::{Receiver, Sender, error::TrySendError};
 use tokio_xmpp::starttls::ServerConfig;
 use xmpp::{
@@ -39,22 +39,23 @@ const LANG: &str = "";
 // Log target for this file.
 const LOG_TARGET: &str = "jutella::xmpp";
 
+// Responses channel size.
+pub const RESPONSES_CHANNEL_SIZE: usize = 1024;
+
 #[derive(Debug)]
 pub struct Config {
     pub auth_jid: BareJid,
     pub auth_password: String,
-    pub allowed_users: Vec<String>,
-    pub request_tx: Sender<Message>,
+    pub request_txs_map: HashMap<String, Sender<Message>>,
     pub response_rx: Receiver<Message>,
 }
 
 /// XMPP agent
 pub struct Xmpp {
     client: Agent<ServerConfig>,
-    request_tx: Sender<Message>,
+    request_txs_map: HashMap<String, Sender<Message>>,
     response_rx: Receiver<Message>,
-    allowed_users: HashSet<String>,
-    clogged_fired: bool,
+    clogged_engine: bool,
 }
 
 impl Xmpp {
@@ -62,8 +63,7 @@ impl Xmpp {
         let Config {
             auth_jid,
             auth_password,
-            allowed_users,
-            request_tx,
+            request_txs_map,
             response_rx,
         } = config;
 
@@ -71,15 +71,43 @@ impl Xmpp {
             .set_client(ClientType::Bot, "jutella-xmpp")
             .build();
 
-        let allowed_users = allowed_users.into_iter().collect();
-
         Self {
             client,
-            request_tx,
+            request_txs_map,
             response_rx,
-            allowed_users,
-            clogged_fired: false,
+            clogged_engine: false,
         }
+    }
+
+    fn process_request(&mut self, message: Message) -> anyhow::Result<()> {
+        let jid = message.jid.clone();
+
+        let Some(request_tx) = self.request_txs_map.get(&jid) else {
+            tracing::trace!(target: LOG_TARGET, jid, "message received from unknown user");
+            return Ok(())
+        };
+
+        tracing::debug!(target: LOG_TARGET, jid, "received request");
+
+        if let Err(e) = request_tx.try_send(message) {
+            match e {
+                TrySendError::Full(_) => {
+                    if !self.clogged_engine {
+                        self.clogged_engine = true;
+                        tracing::error!(
+                            target: LOG_TARGET,
+                            size = crate::engine::REQUESTS_CHANNEL_SIZE,
+                            "requests channel clogged",
+                        );
+                    }
+                }
+                TrySendError::Closed(_) => {
+                    return Err(anyhow!("requests channel closed, terminating"))
+                }
+            }
+        }
+
+        Ok(())
     }
 
     async fn process_response(&mut self, message: Message) {
@@ -88,7 +116,15 @@ impl Xmpp {
             message,
         } = message;
 
-        tracing::trace!(target: LOG_TARGET, "processing response from {jid}");
+        tracing::debug!(target: LOG_TARGET, jid, "sending response");
+
+        let Ok(jid) = BareJid::new(&jid) else {
+            // This must not happen as jids were checked to compare equal to string representation
+            // of allowed users when receiving request.
+            tracing::error!(target: LOG_TARGET, jid, "failed to convert to `BareJid`");
+            debug_assert!(false);
+            return
+        };
 
         self.client
             .send_message(jid.into(), MessageType::Chat, LANG, &message)
@@ -98,34 +134,15 @@ impl Xmpp {
     fn process_xmpp_event(&mut self, event: Event) -> anyhow::Result<()> {
         match event {
             Event::Online => {
-                tracing::info!(target: LOG_TARGET, "Connected to XMPP server");
+                tracing::info!(target: LOG_TARGET, "connected to XMPP server");
             }
             Event::Disconnected(error) => {
-                tracing::warn!(target: LOG_TARGET, "Disconnected from XMPP server: {error}");
+                tracing::warn!(target: LOG_TARGET, "disconnected from XMPP server: {error}");
             }
             Event::ChatMessage(_id, jid, body, _) => {
                 let message = body.0;
-                if self.allowed_users.contains(jid.as_str()) {
-                    tracing::debug!(target: LOG_TARGET, "Message received from allowed JID {jid}");
-                    if let Err(e) = self.request_tx.try_send(Message {
-                        jid,
-                        message,
-                    }) {
-                        match e {
-                            TrySendError::Full(_) => {
-                                if !self.clogged_fired {
-                                    tracing::error!(target: LOG_TARGET, "requests channel clogged");
-                                    self.clogged_fired = true;
-                                }
-                            }
-                            TrySendError::Closed(_) => {
-                                return Err(anyhow!("requests channel closed, terminating XMPP agent"))
-                            }
-                        }
-                    }
-                } else {
-                    tracing::trace!(target: LOG_TARGET, "Message received from unknown JID {jid}");
-                }
+                let jid = jid.as_str().to_owned();
+                self.process_request(Message { jid, message })?;
             }
             _ => {}
         }
@@ -142,16 +159,14 @@ impl Xmpp {
                             self.process_xmpp_event(event)?;
                         }
                     } else {
-                        return Err(anyhow!("XMPP event stream was closed, terminating XMPP agent"))
+                        return Err(anyhow!("XMPP event stream was closed, terminating"))
                     }
                 }
                 message = self.response_rx.recv() => {
                     if let Some(message) = message {
                         self.process_response(message).await;
                     } else {
-                        return Err(
-                            anyhow!("Message stream from chatbot was closed, terminating XMPP agent")
-                        )
+                        return Ok(())
                     }
                 }
             }

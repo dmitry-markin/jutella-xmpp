@@ -20,13 +20,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-//! Common types.
-
-use xmpp::agent::BareJid;
-
 // Message passed from XMPP engine to chatbot and back.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Message {
-    pub jid: BareJid,
+    pub jid: String,
     pub message: String,
 }

@@ -43,7 +43,7 @@ struct ConfigFile {
     api_url: String,
     api_key: String,
     model: String,
-    system_message: String,
+    system_message: Option<String>,
 }
 
 impl ConfigFile {
@@ -67,7 +67,7 @@ pub struct Config {
     pub api_url: String,
     pub api_key: String,
     pub model: String,
-    pub system_message: String,
+    pub system_message: Option<String>,
 }
 
 impl Config {

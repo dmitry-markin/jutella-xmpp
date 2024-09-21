@@ -1145,7 +1145,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "futures",
  "jutella",
+ "reqwest",
  "rustls",
  "serde",
  "tokio",

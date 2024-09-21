@@ -23,22 +23,19 @@
 //! `jutella-xmpp`: XMPP – OpenAI API bridge.
 
 mod config;
-mod jutella;
-mod types;
+mod engine;
+mod message;
 mod xmpp;
 
 use crate::{
     config::Config,
-    xmpp::{Config as XmppConfig, Xmpp},
-    jutella::{Config as JutellaConfig, Jutella},
+    engine::{ChatbotEngine, Config as ChatbotEngineConfig},
+    xmpp::{Config as XmppConfig, Xmpp, RESPONSES_CHANNEL_SIZE},
 };
 use anyhow::{anyhow, Context as _};
 use tokio::sync::mpsc::channel;
 use tracing_log::LogTracer;
 use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
-
-// That many messages mean something is not OK.
-const CHANNEL_SIZE: usize = 1024;
 
 // Disable noisy log targets.
 const LOG_FILTER_DERICTIVE: &str = "xmpp::disco=warn";
@@ -47,7 +44,6 @@ const LOG_FILTER_DERICTIVE: &str = "xmpp::disco=warn";
 async fn main() -> anyhow::Result<()> {
     setup_logging()?;
 
-    // For some reason `rustls` per-process default crypto provider must be set for `xmpp` to work.
     install_crypto_provider()?;
 
     let Config {
@@ -60,35 +56,31 @@ async fn main() -> anyhow::Result<()> {
         system_message,
     } = Config::load().context("Failed to load config")?;
 
-    let (request_tx, request_rx) = channel(CHANNEL_SIZE);
-    let (response_tx, response_rx) = channel(CHANNEL_SIZE);
+    let (response_tx, response_rx) = channel(RESPONSES_CHANNEL_SIZE);
 
-    let xmpp = Xmpp::new(XmppConfig {
-        auth_jid,
-        auth_password,
-        allowed_users: allowed_users.clone(),
-        request_tx,
-        response_rx,
-    });
-
-    let jutella = Jutella::new(JutellaConfig{
+    let (chatbot_engine, request_txs_map) = ChatbotEngine::new(ChatbotEngineConfig {
         api_url,
         api_key,
         model,
         system_message,
         allowed_users,
-        request_rx,
         response_tx,
+    })
+    .context("Failed to initialize chatbot engine")?;
+
+    let xmpp = Xmpp::new(XmppConfig {
+        auth_jid,
+        auth_password,
+        request_txs_map,
+        response_rx,
     });
 
-    loop {
-        tokio::select! {
-            result = xmpp.run() => {
-                return result.context("XMPP agent terminated");
-            }
-            result = jutella.run() => {
-                return result.context("chatbot client terminated");
-            }
+    tokio::select! {
+        result = xmpp.run() => {
+            return result.context("XMPP agent terminated")
+        }
+        result = chatbot_engine.run() => {
+            return result.context("chatbot engine terminated")
         }
     }
 }
@@ -115,6 +107,7 @@ fn setup_logging() -> anyhow::Result<()> {
 }
 
 fn install_crypto_provider() -> anyhow::Result<()> {
+    // For some reason `rustls` per-process default crypto provider must be set for `xmpp` to work.
     rustls::crypto::CryptoProvider::install_default(rustls::crypto::aws_lc_rs::default_provider())
         .map_err(|_| anyhow!("Failed to install default `rustls` crypto provider"))
 }
