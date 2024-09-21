@@ -1,0 +1,13 @@
+[package]
+name = "jutella-xmpp"
+description = "XMPP – OpenAI API bridge"
+license = "MIT"
+repository = "https://github.com/dmitry-markin/jutella-xmpp"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "jutellaxmpp"
+path = "src/main.rs"
+
+[dependencies]

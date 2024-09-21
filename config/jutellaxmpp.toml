@@ -1,0 +1,17 @@
+# JID to serve the responses from.
+jid = "chatbot@xmpp.com"
+
+# XMPP account password.
+password = "<password>"
+
+# OpenAI API base URL.
+api_url = "https://models.inference.ai.azure.com/"
+
+# API key.
+api_key = "<API key>"
+
+# Model to use.
+model = "gpt-4o-mini"
+
+# Optional system message to initialize the model.
+system_message = "You are a helpful assistant."
