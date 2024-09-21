@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.89"
+jutella = { git = "https://github.com/dmitry-markin/jutella.git", rev = "c4582925d19886e0c938392486170b4a1c2fd902" }
 clap = { version = "4.5.18", features = ["derive", "wrap_help"] }
 serde = { version = "1.0.210", features = ["derive"] }
 tokio = { version = "1.40.0", features = ["macros", "rt-multi-thread"] }
@@ -19,4 +20,7 @@ toml = "0.8.19"
 tracing = "0.1.40"
 tracing-log = "0.2.0"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-xmpp = { version = "0.6.0", default-features = false }
+xmpp = { version = "0.6.0", default-features = false, features = ["starttls-rust"] }
+tokio-xmpp = "4.0.0"
+xmpp-parsers = "0.21.0"
+rustls = "0.23.13"
