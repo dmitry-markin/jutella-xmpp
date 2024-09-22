@@ -84,6 +84,16 @@ impl Xmpp {
         }
     }
 
+    async fn send_message(&mut self, bare_jid: BareJid, message: String) {
+        let jid = bare_jid.as_str().to_owned();
+        let mut xmpp_message = XmppMessage::new(Some(bare_jid.into()));
+        xmpp_message.bodies.insert(String::new(), Body(message));
+
+        if let Err(error) = self.client.send_stanza(xmpp_message.into()).await {
+            tracing::error!(target: LOG_TARGET, jid, ?error, "failed to send xmpp message");
+        }
+    }
+
     async fn process_response(&mut self, message: Message) {
         let Message { jid, message } = message;
 
@@ -97,24 +107,19 @@ impl Xmpp {
             return;
         };
 
-        let mut xmpp_message = XmppMessage::new(Some(bare_jid.into()));
-        xmpp_message.bodies.insert(String::new(), Body(message));
-
-        if let Err(error) = self.client.send_stanza(xmpp_message.into()).await {
-            tracing::error!(target: LOG_TARGET, jid, ?error, "failed to send xmpp message");
-        }
+        self.send_message(bare_jid, message).await;
     }
 
-    fn process_xmpp_message(&mut self, message: XmppMessage) -> anyhow::Result<()> {
-
+    async fn process_xmpp_message(&mut self, message: XmppMessage) -> anyhow::Result<()> {
         let Some(ref jid) = message.from else {
             tracing::trace!(target: LOG_TARGET, ?message, "xmpp message without `from` field");
             return Ok(());
         };
 
-        let jid = jid.to_bare().as_str().to_owned();
+        let bare_jid = jid.to_bare();
+        let jid = bare_jid.as_str().to_owned();
 
-        let Some(request_tx) = self.request_txs_map.get(&jid) else {
+        if !self.request_txs_map.contains_key(&jid) {
             tracing::trace!(target: LOG_TARGET, jid, ?message, "message from unknown user");
             return Ok(());
         };
@@ -135,14 +140,27 @@ impl Xmpp {
             return Ok(());
         };
 
+        if message.payloads.iter().any(|p| p.name() == "encrypted") {
+            tracing::debug!(target: LOG_TARGET, jid, "encrypted message");
+            self.send_message(
+                bare_jid,
+                "[ERROR] Encrypted messages not supported".to_string(),
+            )
+            .await;
+            return Ok(());
+        }
+
         tracing::debug!(target: LOG_TARGET, jid, "received request");
 
-        let message = Message {
+        let request_tx = self
+            .request_txs_map
+            .get(&jid)
+            .expect("was checked above to contain jid; qed");
+        
+        if let Err(e) = request_tx.try_send(Message {
             jid: jid.clone(),
             message: body.0.clone(),
-        };
-
-        if let Err(e) = request_tx.try_send(message) {
+        }) {
             match e {
                 TrySendError::Full(_) => {
                     if !self.clogged_engine {
@@ -177,7 +195,7 @@ impl Xmpp {
             }
             Event::Stanza(stanza) => {
                 if let Ok(message) = XmppMessage::try_from(stanza) {
-                    self.process_xmpp_message(message)?;
+                    self.process_xmpp_message(message).await?;
                 }
             }
         }
