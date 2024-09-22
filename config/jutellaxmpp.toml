@@ -10,8 +10,14 @@ allowed_users = ["alex@xmpp.com", "john@example.com"]
 # OpenAI API base URL.
 api_url = "https://models.inference.ai.azure.com/"
 
-# API key.
+# API version (optional).
+api_version = "2023-03-15-preview"
+
+# Auth header "api-key: {api_key}". Only one of `api_key` / `api_token` must be set.
 api_key = "<API key>"
+
+# Auth header "Authorization: Bearer {api_token}"
+#api_token = "<API token>"
 
 # Model to use.
 model = "gpt-4o-mini"

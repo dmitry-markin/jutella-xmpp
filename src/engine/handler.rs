@@ -35,6 +35,7 @@ const LOG_TARGET: &str = "jutella::handler";
 pub struct ChatbotHandlerConfig {
     pub jid: String,
     pub api_url: String,
+    pub api_version: Option<String>,
     pub model: String,
     pub system_message: Option<String>,
     pub max_history_tokens: Option<usize>,
@@ -57,6 +58,7 @@ impl ChatbotHandler {
         let ChatbotHandlerConfig {
             jid,
             api_url,
+            api_version,
             model,
             system_message,
             max_history_tokens,
@@ -69,6 +71,7 @@ impl ChatbotHandler {
             reqwest_client,
             ChatClientConfig {
                 api_url,
+                api_version,
                 model,
                 system_message,
                 max_history_tokens,

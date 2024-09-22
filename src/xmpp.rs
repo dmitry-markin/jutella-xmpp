@@ -156,7 +156,7 @@ impl Xmpp {
             .request_txs_map
             .get(&jid)
             .expect("was checked above to contain jid; qed");
-        
+
         if let Err(e) = request_tx.try_send(Message {
             jid: jid.clone(),
             message: body.0.clone(),

@@ -51,7 +51,8 @@ async fn main() -> anyhow::Result<()> {
         auth_password,
         allowed_users,
         api_url,
-        api_key,
+        api_version,
+        api_auth,
         model,
         system_message,
         max_history_tokens,
@@ -61,7 +62,8 @@ async fn main() -> anyhow::Result<()> {
 
     let (chatbot_engine, request_txs_map) = ChatbotEngine::new(ChatbotEngineConfig {
         api_url,
-        api_key,
+        api_version,
+        api_auth,
         model,
         system_message,
         max_history_tokens,

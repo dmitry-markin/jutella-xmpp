@@ -33,10 +33,7 @@ use futures::{
     future::{BoxFuture, FutureExt},
     stream::{FuturesUnordered, StreamExt},
 };
-use reqwest::{
-    header::{HeaderValue, AUTHORIZATION},
-    ClientBuilder,
-};
+use reqwest::ClientBuilder;
 use std::{collections::HashMap, time::Duration};
 use tokio::sync::mpsc::{channel, Sender};
 
@@ -53,7 +50,8 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 #[derive(Debug)]
 pub struct Config {
     pub api_url: String,
-    pub api_key: String,
+    pub api_version: Option<String>,
+    pub api_auth: jutella::Auth,
     pub model: String,
     pub system_message: Option<String>,
     pub max_history_tokens: Option<usize>,
@@ -69,7 +67,8 @@ impl ChatbotEngine {
     pub fn new(config: Config) -> anyhow::Result<(Self, HashMap<String, Sender<Message>>)> {
         let Config {
             api_url,
-            api_key,
+            api_version,
+            api_auth,
             model,
             system_message,
             max_history_tokens,
@@ -78,14 +77,7 @@ impl ChatbotEngine {
         } = config;
 
         let reqwest_client = ClientBuilder::new()
-            .default_headers(
-                [(
-                    AUTHORIZATION,
-                    HeaderValue::from_str(&format!("Bearer {api_key}"))?,
-                )]
-                .into_iter()
-                .collect(),
-            )
+            .default_headers(api_auth.try_into()?)
             .timeout(REQUEST_TIMEOUT)
             .build()
             .context("Failed to initialize HTTP client")?;
@@ -97,6 +89,7 @@ impl ChatbotEngine {
             let handler_config = ChatbotHandlerConfig {
                 jid: jid.clone(),
                 api_url: api_url.clone(),
+                api_version: api_version.clone(),
                 model: model.clone(),
                 system_message: system_message.clone(),
                 max_history_tokens,

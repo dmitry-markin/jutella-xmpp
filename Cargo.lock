@@ -1118,7 +1118,7 @@ dependencies = [
 [[package]]
 name = "jutella"
 version = "0.2.0"
-source = "git+https://github.com/dmitry-markin/jutella.git?rev=e4353cb95f7ab1e98d7d0c150860184d9ee2c6e3#e4353cb95f7ab1e98d7d0c150860184d9ee2c6e3"
+source = "git+https://github.com/dmitry-markin/jutella.git?rev=c11f1a0f8fa24bd66348f937e7747cc10c0143a0#c11f1a0f8fa24bd66348f937e7747cc10c0143a0"
 dependencies = [
  "anyhow",
  "clap",
