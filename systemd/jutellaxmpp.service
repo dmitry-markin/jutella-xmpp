@@ -1,0 +1,14 @@
+[Unit]
+Description=Jutella XMPP – OpenAI API bridge
+# Shutdown before the network stack to gacefully close connections
+After=network.target
+
+[Service]
+User=jutella
+Group=jutella
+ExecStart=/usr/local/bin/jutellaxmpp --config /etc/jutellaxmpp.toml
+RestartSec=5
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
