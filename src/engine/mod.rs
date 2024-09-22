@@ -44,7 +44,7 @@ const LOG_TARGET: &str = "jutella::engine";
 pub const REQUESTS_CHANNEL_SIZE: usize = 100;
 
 // HTTP request timeout.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Configuration for [`Jutella`].
 #[derive(Debug)]
