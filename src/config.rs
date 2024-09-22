@@ -25,7 +25,7 @@
 use anyhow::{anyhow, Context as _, Result};
 use clap::Parser;
 use std::{fs, path::PathBuf};
-use xmpp::agent::BareJid;
+use xmpp_parsers::jid::BareJid;
 
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]

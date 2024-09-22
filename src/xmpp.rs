@@ -24,17 +24,14 @@
 
 use crate::message::Message;
 use anyhow::anyhow;
+use futures::stream::StreamExt;
 use std::collections::HashMap;
-use tokio::sync::mpsc::{Receiver, Sender, error::TrySendError};
-use tokio_xmpp::starttls::ServerConfig;
-use xmpp::{
-    agent::{Agent, BareJid},
-    ClientBuilder, ClientType, Event,
+use tokio::sync::mpsc::{error::TrySendError, Receiver, Sender};
+use tokio_xmpp::{starttls::ServerConfig, AsyncClient as XmppClient, Event};
+use xmpp_parsers::{
+    jid::BareJid,
+    message::{Body, Message as XmppMessage, MessageType},
 };
-use xmpp_parsers::message::MessageType;
-
-// It is OK to not set language.
-const LANG: &str = "";
 
 // Log target for this file.
 const LOG_TARGET: &str = "jutella::xmpp";
@@ -52,7 +49,7 @@ pub struct Config {
 
 /// XMPP agent
 pub struct Xmpp {
-    client: Agent<ServerConfig>,
+    client: XmppClient<ServerConfig>,
     request_txs_map: HashMap<String, Sender<Message>>,
     response_rx: Receiver<Message>,
     clogged_engine: bool,
@@ -67,9 +64,8 @@ impl Xmpp {
             response_rx,
         } = config;
 
-        let client = ClientBuilder::new(auth_jid, &auth_password)
-            .set_client(ClientType::Bot, "jutella-xmpp")
-            .build();
+        let mut client = XmppClient::new(auth_jid, auth_password);
+        client.set_reconnect(true);
 
         Self {
             client,
@@ -79,15 +75,62 @@ impl Xmpp {
         }
     }
 
-    fn process_request(&mut self, message: Message) -> anyhow::Result<()> {
-        let jid = message.jid.clone();
+    async fn process_response(&mut self, message: Message) {
+        let Message { jid, message } = message;
+
+        tracing::debug!(target: LOG_TARGET, jid, "sending response");
+
+        let Ok(bare_jid) = BareJid::new(&jid) else {
+            // This must not happen as jids were checked to compare equal to string representation
+            // of allowed users when receiving request.
+            tracing::error!(target: LOG_TARGET, jid, "failed to convert to `BareJid`");
+            debug_assert!(false);
+            return;
+        };
+
+        let mut xmpp_message = XmppMessage::new(Some(bare_jid.into()));
+        xmpp_message.bodies.insert(String::new(), Body(message));
+
+        if let Err(error) = self.client.send_stanza(xmpp_message.into()).await {
+            tracing::error!(target: LOG_TARGET, jid, ?error, "failed to send xmpp message");
+        }
+    }
+
+    fn process_xmpp_message(&mut self, message: XmppMessage) -> anyhow::Result<()> {
+        let Some(ref jid) = message.from else {
+            tracing::trace!(target: LOG_TARGET, ?message, "xmpp message without `from` field");
+            return Ok(());
+        };
+
+        let jid = jid.as_str().to_owned();
 
         let Some(request_tx) = self.request_txs_map.get(&jid) else {
-            tracing::trace!(target: LOG_TARGET, jid, "message received from unknown user");
-            return Ok(())
+            tracing::trace!(target: LOG_TARGET, jid, ?message, "message from unknown user");
+            return Ok(());
+        };
+
+        if message.type_ != MessageType::Chat {
+            tracing::trace!(
+                target: LOG_TARGET,
+                jid,
+                type_ = ?message.type_,
+                ?message,
+                "not a chat message received",
+            );
+            return Ok(());
+        }
+
+        let Some(body) = message.bodies.get("") else {
+            tracing::trace!(target: LOG_TARGET, jid, ?message, "chat message without a body received");
+            return Ok(());
         };
 
         tracing::debug!(target: LOG_TARGET, jid, "received request");
+
+        let message = Message {
+            jid: jid.clone(),
+            message: body.0.clone(),
+        };
 
         if let Err(e) = request_tx.try_send(message) {
             match e {
@@ -96,6 +139,7 @@ impl Xmpp {
                         self.clogged_engine = true;
                         tracing::error!(
                             target: LOG_TARGET,
+                            jid,
                             size = crate::engine::REQUESTS_CHANNEL_SIZE,
                             "requests channel clogged",
                         );
@@ -110,54 +154,30 @@ impl Xmpp {
         Ok(())
     }
 
-    async fn process_response(&mut self, message: Message) {
-        let Message {
-            jid,
-            message,
-        } = message;
-
-        tracing::debug!(target: LOG_TARGET, jid, "sending response");
-
-        let Ok(jid) = BareJid::new(&jid) else {
-            // This must not happen as jids were checked to compare equal to string representation
-            // of allowed users when receiving request.
-            tracing::error!(target: LOG_TARGET, jid, "failed to convert to `BareJid`");
-            debug_assert!(false);
-            return
-        };
-
-        self.client
-            .send_message(jid.into(), MessageType::Chat, LANG, &message)
-            .await;
-    }
-
     fn process_xmpp_event(&mut self, event: Event) -> anyhow::Result<()> {
         match event {
-            Event::Online => {
+            Event::Online { .. } => {
                 tracing::info!(target: LOG_TARGET, "connected to XMPP server");
             }
             Event::Disconnected(error) => {
-                tracing::warn!(target: LOG_TARGET, "disconnected from XMPP server: {error}");
+                tracing::warn!(target: LOG_TARGET, ?error, "disconnected from XMPP server");
             }
-            Event::ChatMessage(_id, jid, body, _) => {
-                let message = body.0;
-                let jid = jid.as_str().to_owned();
-                self.process_request(Message { jid, message })?;
+            Event::Stanza(stanza) => {
+                if let Ok(message) = XmppMessage::try_from(stanza) {
+                    self.process_xmpp_message(message)?;
+                }
             }
-            _ => {}
         }
 
         Ok(())
     }
 
-    pub async fn run(mut self) -> anyhow::Result<()>{
+    pub async fn run(mut self) -> anyhow::Result<()> {
         loop {
             tokio::select! {
-                events = self.client.wait_for_events() => {
-                    if let Some(events) = events {
-                        for event in events {
-                            self.process_xmpp_event(event)?;
-                        }
+                event = self.client.next() => {
+                    if let Some(event) = event {
+                        self.process_xmpp_event(event)?;
                     } else {
                         return Err(anyhow!("XMPP event stream was closed, terminating"))
                     }
@@ -173,4 +193,3 @@ impl Xmpp {
         }
     }
 }
-

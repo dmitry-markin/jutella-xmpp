@@ -20,7 +20,6 @@ toml = "0.8.19"
 tracing = "0.1.40"
 tracing-log = "0.2.0"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-xmpp = { version = "0.6.0", default-features = false, features = ["starttls-rust"] }
 tokio-xmpp = "4.0.0"
 xmpp-parsers = "0.21.0"
 rustls = "0.23.13"
