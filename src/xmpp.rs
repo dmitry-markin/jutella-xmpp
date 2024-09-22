@@ -25,12 +25,16 @@
 use crate::message::Message;
 use anyhow::anyhow;
 use futures::stream::StreamExt;
-use std::collections::HashMap;
-use tokio::sync::mpsc::{error::TrySendError, Receiver, Sender};
+use std::{collections::HashMap, time::Duration};
+use tokio::{
+    sync::mpsc::{error::TrySendError, Receiver, Sender},
+    time::MissedTickBehavior,
+};
 use tokio_xmpp::{starttls::ServerConfig, AsyncClient as XmppClient, Event};
 use xmpp_parsers::{
     jid::BareJid,
     message::{Body, Message as XmppMessage, MessageType},
+    presence::{Presence, Show as PresenceShow},
 };
 
 // Log target for this file.
@@ -38,6 +42,9 @@ const LOG_TARGET: &str = "jutella::xmpp";
 
 // Responses channel size.
 pub const RESPONSES_CHANNEL_SIZE: usize = 1024;
+
+// Period to send presence with.
+const PRESENSE_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Debug)]
 pub struct Config {
@@ -52,6 +59,7 @@ pub struct Xmpp {
     client: XmppClient<ServerConfig>,
     request_txs_map: HashMap<String, Sender<Message>>,
     response_rx: Receiver<Message>,
+    online: bool,
     clogged_engine: bool,
 }
 
@@ -71,6 +79,7 @@ impl Xmpp {
             client,
             request_txs_map,
             response_rx,
+            online: false,
             clogged_engine: false,
         }
     }
@@ -97,12 +106,13 @@ impl Xmpp {
     }
 
     fn process_xmpp_message(&mut self, message: XmppMessage) -> anyhow::Result<()> {
+
         let Some(ref jid) = message.from else {
             tracing::trace!(target: LOG_TARGET, ?message, "xmpp message without `from` field");
             return Ok(());
         };
 
-        let jid = jid.as_str().to_owned();
+        let jid = jid.to_bare().as_str().to_owned();
 
         let Some(request_tx) = self.request_txs_map.get(&jid) else {
             tracing::trace!(target: LOG_TARGET, jid, ?message, "message from unknown user");
@@ -110,7 +120,7 @@ impl Xmpp {
         };
 
         if message.type_ != MessageType::Chat {
-            tracing::trace!(
+            tracing::warn!(
                 target: LOG_TARGET,
                 jid,
                 type_ = ?message.type_,
@@ -121,7 +131,7 @@ impl Xmpp {
         }
 
         let Some(body) = message.bodies.get("") else {
-            tracing::trace!(target: LOG_TARGET, jid, ?message, "chat message without a body received");
+            tracing::trace!(target: LOG_TARGET, jid, ?message, "chat message without a body");
             return Ok(());
         };
 
@@ -154,13 +164,16 @@ impl Xmpp {
         Ok(())
     }
 
-    fn process_xmpp_event(&mut self, event: Event) -> anyhow::Result<()> {
+    async fn process_xmpp_event(&mut self, event: Event) -> anyhow::Result<()> {
         match event {
             Event::Online { .. } => {
                 tracing::info!(target: LOG_TARGET, "connected to XMPP server");
+                self.online = true;
+                self.send_presence().await;
             }
             Event::Disconnected(error) => {
-                tracing::warn!(target: LOG_TARGET, ?error, "disconnected from XMPP server");
+                tracing::error!(target: LOG_TARGET, ?error, "disconnected from XMPP server");
+                self.online = false;
             }
             Event::Stanza(stanza) => {
                 if let Ok(message) = XmppMessage::try_from(stanza) {
@@ -172,12 +185,25 @@ impl Xmpp {
         Ok(())
     }
 
+    async fn send_presence(&mut self) {
+        tracing::trace!(target: LOG_TARGET, "sending presence");
+
+        let presence = Presence::available().with_show(PresenceShow::Chat);
+
+        if let Err(error) = self.client.send_stanza(presence.into()).await {
+            tracing::error!(target: LOG_TARGET, ?error, "failed to send presence");
+        }
+    }
+
     pub async fn run(mut self) -> anyhow::Result<()> {
+        let mut presence_tick = tokio::time::interval(PRESENSE_INTERVAL);
+        presence_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
         loop {
             tokio::select! {
                 event = self.client.next() => {
                     if let Some(event) = event {
-                        self.process_xmpp_event(event)?;
+                        self.process_xmpp_event(event).await?;
                     } else {
                         return Err(anyhow!("XMPP event stream was closed, terminating"))
                     }
@@ -187,6 +213,12 @@ impl Xmpp {
                         self.process_response(message).await;
                     } else {
                         return Ok(())
+                    }
+                }
+                _ = presence_tick.tick() => {
+                    if self.online {
+                        // This makes sure we detect dropped TCP stream and reconnect.
+                        self.send_presence().await;
                     }
                 }
             }
