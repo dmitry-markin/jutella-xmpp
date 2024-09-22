@@ -54,6 +54,7 @@ async fn main() -> anyhow::Result<()> {
         api_key,
         model,
         system_message,
+        max_history_tokens,
     } = Config::load().context("Failed to load config")?;
 
     let (response_tx, response_rx) = channel(RESPONSES_CHANNEL_SIZE);
@@ -63,6 +64,7 @@ async fn main() -> anyhow::Result<()> {
         api_key,
         model,
         system_message,
+        max_history_tokens,
         allowed_users,
         response_tx,
     })

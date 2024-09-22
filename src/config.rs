@@ -44,6 +44,7 @@ struct ConfigFile {
     api_key: String,
     model: String,
     system_message: Option<String>,
+    max_history_tokens: Option<usize>,
 }
 
 impl ConfigFile {
@@ -68,6 +69,7 @@ pub struct Config {
     pub api_key: String,
     pub model: String,
     pub system_message: Option<String>,
+    pub max_history_tokens: Option<usize>,
 }
 
 impl Config {
@@ -81,6 +83,7 @@ impl Config {
             api_key,
             model,
             system_message,
+            max_history_tokens,
         } = ConfigFile::load(config)?;
 
         let auth_jid = BareJid::new(&jid).context("Invalid auth JID")?;
@@ -93,6 +96,7 @@ impl Config {
             api_key,
             model,
             system_message,
+            max_history_tokens,
         })
     }
 }

@@ -163,6 +163,12 @@ dependencies = [
 
 [[package]]
 name = "base64"
+version = "0.21.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
+
+[[package]]
+name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
@@ -191,6 +197,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "bit-set"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0700ddab506f33b20a03b13996eccd309a48e5ff77d0d95926aa0210fb4e95f1"
+dependencies = [
+ "bit-vec",
+]
+
+[[package]]
+name = "bit-vec"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "349f9b6a179ed607305526ca489b34ad0a41aed5f7980fa90eb03160b69598fb"
+
+[[package]]
 name = "bitflags"
 version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -212,6 +233,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
 dependencies = [
  "generic-array",
+]
+
+[[package]]
+name = "bstr"
+version = "1.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "40723b8fb387abc38f4f4a37c09073622e41dd12327033091ef8950659e6dc0c"
+dependencies = [
+ "memchr",
+ "regex-automata 0.4.7",
+ "serde",
 ]
 
 [[package]]
@@ -481,6 +513,16 @@ checksum = "534c5cf6194dfab3db3242765c03bbe257cf92f22b38f6bc0c58d59108a820ba"
 dependencies = [
  "libc",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "fancy-regex"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7493d4c459da9f84325ad297371a6b2b8a162800873a22e3b6b6512e61d18c05"
+dependencies = [
+ "bit-set",
+ "regex",
 ]
 
 [[package]]
@@ -1076,7 +1118,7 @@ dependencies = [
 [[package]]
 name = "jutella"
 version = "0.2.0"
-source = "git+https://github.com/dmitry-markin/jutella.git?rev=c4582925d19886e0c938392486170b4a1c2fd902#c4582925d19886e0c938392486170b4a1c2fd902"
+source = "git+https://github.com/dmitry-markin/jutella.git?rev=e4353cb95f7ab1e98d7d0c150860184d9ee2c6e3#e4353cb95f7ab1e98d7d0c150860184d9ee2c6e3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1086,6 +1128,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "tiktoken-rs",
  "tokio",
  "toml",
 ]
@@ -1599,7 +1642,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8f4955649ef5c38cc7f9e8aa41761d48fb9677197daea9984dc54f56aad5e63"
 dependencies = [
  "async-compression",
- "base64",
+ "base64 0.22.1",
  "bytes",
  "futures-core",
  "futures-util",
@@ -1716,7 +1759,7 @@ version = "2.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "196fe16b00e106300d3e45ecfcb764fa292a535d7326a29a5875c579c7417425"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "rustls-pki-types",
 ]
 
@@ -1777,7 +1820,7 @@ version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6777dddc8108d9f36afbb008bc15b18edab2d17a8664ef58380b9398460e4e30"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "getrandom",
  "hmac",
  "pbkdf2",
@@ -2026,6 +2069,21 @@ checksum = "8b9ef9bad013ada3808854ceac7b46812a6465ba368859a37e2100283d2d719c"
 dependencies = [
  "cfg-if",
  "once_cell",
+]
+
+[[package]]
+name = "tiktoken-rs"
+version = "0.5.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c314e7ce51440f9e8f5a497394682a57b7c323d0f4d0a6b1b13c429056e0e234"
+dependencies = [
+ "anyhow",
+ "base64 0.21.7",
+ "bstr",
+ "fancy-regex",
+ "lazy_static",
+ "parking_lot",
+ "rustc-hash 1.1.0",
 ]
 
 [[package]]
@@ -2702,7 +2760,7 @@ version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab9890d7a3df540a6a8a7384fa3db58be3a4685799e0271756b26213d3f67903"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "blake2",
  "chrono",
  "digest",
@@ -2720,7 +2778,7 @@ version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4c1e554e5e6689a0ec1b62a3b5ed450a1bb45118553a9665f4ee2277d135ba83"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "jid",
  "minidom",
  "rxml",

@@ -56,6 +56,7 @@ pub struct Config {
     pub api_key: String,
     pub model: String,
     pub system_message: Option<String>,
+    pub max_history_tokens: Option<usize>,
     pub allowed_users: Vec<String>,
     pub response_tx: Sender<Message>,
 }
@@ -71,6 +72,7 @@ impl ChatbotEngine {
             api_key,
             model,
             system_message,
+            max_history_tokens,
             allowed_users,
             response_tx,
         } = config;
@@ -97,6 +99,7 @@ impl ChatbotEngine {
                 api_url: api_url.clone(),
                 model: model.clone(),
                 system_message: system_message.clone(),
+                max_history_tokens,
                 reqwest_client: reqwest_client.clone(),
                 request_rx,
                 response_tx: response_tx.clone(),
