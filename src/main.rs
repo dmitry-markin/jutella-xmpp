@@ -37,6 +37,9 @@ use tokio::sync::mpsc::channel;
 use tracing_log::LogTracer;
 use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 
+// Log target for this file.
+const LOG_TARGET: &str = "jutella";
+
 // Disable noisy log targets.
 const LOG_FILTER_DERICTIVE: &str = "xmpp::disco=warn";
 
@@ -57,6 +60,15 @@ async fn main() -> anyhow::Result<()> {
         system_message,
         max_history_tokens,
     } = Config::load().context("Failed to load config")?;
+
+    tracing::debug!(
+        target: LOG_TARGET,
+        api_url,
+        api_version,
+        model,
+        max_history_tokens,
+        "configuration",
+    );
 
     let (response_tx, response_rx) = channel(RESPONSES_CHANNEL_SIZE);
 

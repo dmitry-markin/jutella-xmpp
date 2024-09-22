@@ -25,5 +25,5 @@ model = "gpt-4o-mini"
 # Optional system message to initialize the model.
 system_message = "You are a helpful assistant."
 
-# Optional, but highly recommended maximum number of tokens to keep in every conversation.
+# Maximum number of tokens to keep in every conversation.
 max_history_tokens = 2500

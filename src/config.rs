@@ -46,7 +46,7 @@ struct ConfigFile {
     api_token: Option<String>,
     model: String,
     system_message: Option<String>,
-    max_history_tokens: Option<usize>,
+    max_history_tokens: usize,
 }
 
 impl ConfigFile {
@@ -72,7 +72,7 @@ pub struct Config {
     pub api_auth: jutella::Auth,
     pub model: String,
     pub system_message: Option<String>,
-    pub max_history_tokens: Option<usize>,
+    pub max_history_tokens: usize,
 }
 
 impl Config {

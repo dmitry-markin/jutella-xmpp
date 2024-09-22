@@ -38,7 +38,7 @@ pub struct ChatbotHandlerConfig {
     pub api_version: Option<String>,
     pub model: String,
     pub system_message: Option<String>,
-    pub max_history_tokens: Option<usize>,
+    pub max_history_tokens: usize,
     pub reqwest_client: reqwest::Client,
     pub response_tx: Sender<Message>,
     pub request_rx: Receiver<Message>,
@@ -54,7 +54,7 @@ pub struct ChatbotHandler {
 }
 
 impl ChatbotHandler {
-    pub fn new(config: ChatbotHandlerConfig) -> Self {
+    pub fn new(config: ChatbotHandlerConfig) -> Result<Self, jutella::Error> {
         let ChatbotHandlerConfig {
             jid,
             api_url,
@@ -74,17 +74,17 @@ impl ChatbotHandler {
                 api_version,
                 model,
                 system_message,
-                max_history_tokens,
+                max_history_tokens: Some(max_history_tokens),
             },
-        );
+        )?;
 
-        Self {
+        Ok(Self {
             jid,
             client,
             response_tx,
             request_rx,
             clogged: false,
-        }
+        })
     }
 
     async fn handle_message(&mut self, message: Message) -> anyhow::Result<()> {

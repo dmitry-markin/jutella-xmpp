@@ -54,7 +54,7 @@ pub struct Config {
     pub api_auth: jutella::Auth,
     pub model: String,
     pub system_message: Option<String>,
-    pub max_history_tokens: Option<usize>,
+    pub max_history_tokens: usize,
     pub allowed_users: Vec<String>,
     pub response_tx: Sender<Message>,
 }
@@ -100,13 +100,16 @@ impl ChatbotEngine {
 
             let handler = ChatbotHandler::new(handler_config);
 
-            ((jid, request_tx), handler.run().boxed())
+            ((jid, request_tx), handler.map(|h| h.run().boxed()))
         });
 
         let (handlers_txs, futures): (Vec<_>, Vec<_>) = handlers.unzip();
 
         let handlers_tx_map = handlers_txs.into_iter().collect();
-        let handlers_futures = futures.into_iter().collect();
+        let handlers_futures = futures
+            .into_iter()
+            .collect::<Result<_, _>>()
+            .context("Failed to initialize `ChatClient`")?;
 
         Ok((Self { handlers_futures }, handlers_tx_map))
     }
