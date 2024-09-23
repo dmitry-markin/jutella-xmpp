@@ -97,7 +97,7 @@ impl Xmpp {
     async fn process_response(&mut self, message: Message) {
         let Message { jid, message } = message;
 
-        tracing::debug!(target: LOG_TARGET, jid, "sending response");
+        tracing::debug!(target: LOG_TARGET, jid, len = message.len(), "sending response");
 
         let Ok(bare_jid) = BareJid::new(&jid) else {
             // This must not happen as jids were checked to compare equal to string representation
@@ -150,17 +150,16 @@ impl Xmpp {
             return Ok(());
         }
 
-        tracing::debug!(target: LOG_TARGET, jid, "received request");
+        let message = Message { jid: jid.clone(), message: body.0.clone() };
+
+        tracing::debug!(target: LOG_TARGET, jid, len = message.message.len(), "received request");
 
         let request_tx = self
             .request_txs_map
             .get(&jid)
             .expect("was checked above to contain jid; qed");
 
-        if let Err(e) = request_tx.try_send(Message {
-            jid: jid.clone(),
-            message: body.0.clone(),
-        }) {
+        if let Err(e) = request_tx.try_send(message) {
             match e {
                 TrySendError::Full(_) => {
                     if !self.clogged_engine {

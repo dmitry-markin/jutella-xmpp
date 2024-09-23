@@ -95,7 +95,7 @@ impl ChatbotHandler {
                 target: LOG_TARGET,
                 jid,
                 jid_config = self.jid,
-                "received jid does not match configured jid, this is fatal error",
+                "received jid does not match configured jid, this is a bug",
             );
             debug_assert!(false);
             return Err(anyhow!("jid mismatch in request handler"));
