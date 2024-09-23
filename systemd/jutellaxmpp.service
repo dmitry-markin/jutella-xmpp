@@ -6,6 +6,8 @@ After=network.target
 [Service]
 User=jutella
 Group=jutella
+# Uncomment the following line for extended log output.
+#Environment="RUST_LOG=jutella=debug"
 ExecStart=/usr/local/bin/jutellaxmpp --config /etc/jutellaxmpp.toml
 RestartSec=5
 Restart=always
