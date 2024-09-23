@@ -7,17 +7,18 @@ password = "<password>"
 # Users allowed to use the chatbot.
 allowed_users = ["alex@xmpp.com", "john@example.com"]
 
-# OpenAI API base URL.
-api_url = "https://models.inference.ai.azure.com/"
+# OpenAI API base URL. Everything before `chat/completions` in the URL.
+api_url = "https://api.openai.com/v1/"
 
-# API version (optional).
-api_version = "2023-03-15-preview"
+# Optional `api-version` get parameter. Used by Azure endpoints.
+#api_version = "2023-03-15-preview"
 
-# Auth header "api-key: {api_key}". Only one of `api_key` / `api_token` must be set.
-api_key = "<API key>"
+# Auth header `api-key: {api_key}`. Used by Azure endpoints.
+# Only one of `api_key` / `api_token` must be set.
+#api_key = "<API key>"
 
-# Auth header "Authorization: Bearer {api_token}"
-#api_token = "<API token>"
+# Auth header `Authorization: Bearer {api_token}`. Used by OpenAI endpoints.
+api_token = "<API token>"
 
 # Model to use.
 model = "gpt-4o-mini"
