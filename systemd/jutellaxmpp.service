@@ -1,6 +1,6 @@
 [Unit]
 Description=Jutella XMPP – OpenAI API bridge
-# Shutdown before the network stack to gacefully close connections
+# Shutdown before the network stack to gracefully close connections.
 After=network.target
 
 [Service]
