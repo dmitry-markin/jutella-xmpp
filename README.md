@@ -1,7 +1,37 @@
 # jutella-xmpp
 
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/dmitry-markin/jutella-xmpp/blob/master/LICENSE) [![crates.io](https://img.shields.io/crates/v/jutella-xmpp.svg)](https://crates.io/crates/jutella)
+
 XMPP – OpenAI API bridge based on [tokio-xmpp](https://docs.rs/tokio-xmpp/latest/tokio_xmpp/) and [jutella](https://github.com/dmitry-markin/jutella).
 
 Supports OpenAI and Azure endpoints and implements rolling context window to reduce costs.
 
-See a config [example](https://github.com/dmitry-markin/jutella-xmpp/blob/master/config/jutellaxmpp.toml).
+## Installation
+
+### Install the executable
+
+1. Install `cargo` from https://rustup.rs/.
+2. Install `jutella-xmpp` from [crates.io](https://crates.io/crates/jutella-xmpp) with `cargo install jutella-xmpp`.  
+   The executable will be installed as `$HOME/.cargo/bin/jutellaxmpp`.
+3. Alternatively, clone the repo and build the executable with `cargo build --release`. The resulting executable will be `target/release/jutellaxmpp`.
+4. Copy the executable to `/usr/local/bin`.
+
+### Create a user for runnig the daemon
+
+```bash
+sudo useradd --system --shell /sbin/nologin --home-dir /nonexistent jutella
+```
+
+### Install the config
+
+1. Copy the config [example](https://github.com/dmitry-markin/jutella-xmpp/blob/master/config/jutellaxmpp.toml) to `/etc`.
+2. Make it accessible by root only: `sudo chmod 600 /etc/jutellaxmpp.toml`.
+3. Edit the config to match your configuration.
+4. Make the config readable by user `jutella`: `sudo setfacl -m user:jutella:r /etc/jutellaxmpp.toml`.
+5. You will need to repeat step 4 after every edit if using `vim`, as it does not preserve ACL.
+
+### Install the systemd service
+
+1. Copy systemd [service](https://github.com/dmitry-markin/jutella-xmpp/blob/master/systemd/jutellaxmpp.service) to `/etc/systemd/system`.
+2. Enable it to run on system startup: `sudo systemctl enable jutellaxmpp.service`.
+3. Start the service: `sudo systemctl start jutellaxmpp.service`.
