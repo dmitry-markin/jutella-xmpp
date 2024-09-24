@@ -97,12 +97,12 @@ impl Xmpp {
     async fn process_response(&mut self, message: Message) {
         let Message { jid, message } = message;
 
-        tracing::debug!(target: LOG_TARGET, jid, len = message.len(), "sending response");
+        tracing::debug!(target: LOG_TARGET, jid, len = message.len(), "response");
 
         let Ok(bare_jid) = BareJid::new(&jid) else {
             // This must not happen as jids were checked to compare equal to string representation
             // of allowed users when receiving request.
-            tracing::error!(target: LOG_TARGET, jid, "failed to convert to `BareJid`");
+            tracing::error!(target: LOG_TARGET, jid, "failed to convert to `BareJid`; this is a bug");
             debug_assert!(false);
             return;
         };
@@ -152,7 +152,7 @@ impl Xmpp {
 
         let message = Message { jid: jid.clone(), message: body.0.clone() };
 
-        tracing::debug!(target: LOG_TARGET, jid, len = message.message.len(), "received request");
+        tracing::debug!(target: LOG_TARGET, jid, len = message.message.len(), "request");
 
         let request_tx = self
             .request_txs_map
