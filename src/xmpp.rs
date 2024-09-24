@@ -33,7 +33,8 @@ use tokio::{
 use tokio_xmpp::{starttls::ServerConfig, AsyncClient as XmppClient, Event};
 use xmpp_parsers::{
     jid::BareJid,
-    message::{Body, Message as XmppMessage, MessageType},
+    message::{Message as XmppMessage, MessageType},
+    minidom::Element,
     presence::{Presence, Show as PresenceShow},
 };
 
@@ -84,14 +85,18 @@ impl Xmpp {
         }
     }
 
-    async fn send_message(&mut self, bare_jid: BareJid, message: String) {
+    async fn send_xmpp_message(&mut self, bare_jid: BareJid, message: String) {
         let jid = bare_jid.as_str().to_owned();
-        let mut xmpp_message = XmppMessage::new(Some(bare_jid.into()));
-        xmpp_message.bodies.insert(String::new(), Body(message));
+        let xmpp_message =
+            XmppMessage::new(Some(bare_jid.into())).with_body(String::new(), message);
 
-        if let Err(error) = self.client.send_stanza(xmpp_message.into()).await {
-            tracing::error!(target: LOG_TARGET, jid, ?error, "failed to send xmpp message");
-        }
+        self.client
+            .send_stanza(xmpp_message.into())
+            .await
+            .inspect_err(|error| {
+                tracing::error!(target: LOG_TARGET, jid, ?error, "failed to send xmpp message");
+            })
+            .unwrap_or_default();
     }
 
     async fn process_response(&mut self, message: Message) {
@@ -107,7 +112,8 @@ impl Xmpp {
             return;
         };
 
-        self.send_message(bare_jid, message).await;
+        self.send_chat_state_active(bare_jid.clone()).await;
+        self.send_xmpp_message(bare_jid, message).await;
     }
 
     async fn process_xmpp_message(&mut self, message: XmppMessage) -> anyhow::Result<()> {
@@ -142,15 +148,18 @@ impl Xmpp {
 
         if message.payloads.iter().any(|p| p.name() == "encrypted") {
             tracing::debug!(target: LOG_TARGET, jid, "encrypted message");
-            self.send_message(
-                bare_jid,
-                "[ERROR] Encrypted messages not supported".to_string(),
+            self.send_xmpp_message(
+                bare_jid.clone(),
+                "[ERROR] Encrypted messages are not supported".to_string(),
             )
             .await;
             return Ok(());
         }
 
-        let message = Message { jid: jid.clone(), message: body.0.clone() };
+        let message = Message {
+            jid: jid.clone(),
+            message: body.0.clone(),
+        };
 
         tracing::debug!(target: LOG_TARGET, jid, len = message.message.len(), "request");
 
@@ -159,8 +168,11 @@ impl Xmpp {
             .get(&jid)
             .expect("was checked above to contain jid; qed");
 
-        if let Err(e) = request_tx.try_send(message) {
-            match e {
+        match request_tx.try_send(message) {
+            Ok(()) => {
+                self.send_chat_state_composing(bare_jid).await;
+            }
+            Err(e) => match e {
                 TrySendError::Full(_) => {
                     if !self.clogged_engine {
                         self.clogged_engine = true;
@@ -175,10 +187,49 @@ impl Xmpp {
                 TrySendError::Closed(_) => {
                     return Err(anyhow!("requests channel closed, terminating"))
                 }
-            }
+            },
         }
 
         Ok(())
+    }
+
+    async fn send_chat_state_notification(&mut self, bare_jid: BareJid, state: &str) {
+        let composing = Element::builder(state, "http://jabber.org/protocol/chatstates")
+            .prefix(None, "http://jabber.org/protocol/chatstates")
+            .expect("not a duplicate prefix; qed")
+            .build();
+        let no_store = Element::builder("no-store", "urn:xmpp:hints")
+            .prefix(None, "urn:xmpp:hints")
+            .expect("not a duplicate prefix; qed")
+            .build();
+        let message = XmppMessage::new(Some(bare_jid.clone().into()))
+            .with_payloads(vec![composing, no_store]);
+
+        self.client
+            .send_stanza(message.into())
+            .await
+            .inspect_err(|error| {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    jid = bare_jid.as_str(),
+                    ?error,
+                    "error sending chat state notification",
+                );
+            })
+            .unwrap_or_default();
+    }
+
+    async fn send_chat_state_composing(&mut self, bare_jid: BareJid) {
+        tracing::trace!(target: LOG_TARGET, jid = bare_jid.as_str(), "sending state composing");
+
+        self.send_chat_state_notification(bare_jid, "composing")
+            .await;
+    }
+
+    async fn send_chat_state_active(&mut self, bare_jid: BareJid) {
+        tracing::trace!(target: LOG_TARGET, jid = bare_jid.as_str(), "sending state active");
+
+        self.send_chat_state_notification(bare_jid, "active").await;
     }
 
     async fn pre_approve_presence_subscriptions(&mut self) {
@@ -189,15 +240,18 @@ impl Xmpp {
                 tracing::trace!(target: LOG_TARGET, jid, "pre-approving presence subscription");
 
                 let presence = Presence::subscribed().with_to(bare_jid);
-                self.client.send_stanza(presence.into()).await.inspect_err(|error| {
-                    tracing::error!(
-                        target: LOG_TARGET,
-                        jid,
-                        ?error,
-                        "error sending presence subscription pre-approval",
-                    )
-                })
-                .unwrap_or_default();
+                self.client
+                    .send_stanza(presence.into())
+                    .await
+                    .inspect_err(|error| {
+                        tracing::error!(
+                            target: LOG_TARGET,
+                            jid,
+                            ?error,
+                            "error sending presence subscription pre-approval",
+                        )
+                    })
+                    .unwrap_or_default();
             } else {
                 tracing::error!(target: LOG_TARGET, jid, "cannot construct `BareJid`");
             }
