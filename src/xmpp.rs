@@ -181,11 +181,35 @@ impl Xmpp {
         Ok(())
     }
 
+    async fn pre_approve_presence_subscriptions(&mut self) {
+        let users = self.request_txs_map.keys();
+
+        for jid in users {
+            if let Ok(bare_jid) = BareJid::new(jid) {
+                tracing::trace!(target: LOG_TARGET, jid, "pre-approving presence subscription");
+
+                let presence = Presence::subscribed().with_to(bare_jid);
+                self.client.send_stanza(presence.into()).await.inspect_err(|error| {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        jid,
+                        ?error,
+                        "error sending presence subscription pre-approval",
+                    )
+                })
+                .unwrap_or_default();
+            } else {
+                tracing::error!(target: LOG_TARGET, jid, "cannot construct `BareJid`");
+            }
+        }
+    }
+
     async fn process_xmpp_event(&mut self, event: Event) -> anyhow::Result<()> {
         match event {
             Event::Online { .. } => {
                 tracing::info!(target: LOG_TARGET, "connected to XMPP server");
                 self.online = true;
+                self.pre_approve_presence_subscriptions().await;
                 self.send_presence().await;
             }
             Event::Disconnected(error) => {
