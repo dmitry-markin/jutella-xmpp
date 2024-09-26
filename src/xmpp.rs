@@ -279,6 +279,20 @@ impl Xmpp {
         }
     }
 
+    async fn send_initial_chat_state_active(&mut self) {
+        let users = self.request_txs_map.keys().cloned().collect::<Vec<_>>();
+
+        for jid in users {
+            if let Ok(bare_jid) = BareJid::new(&jid) {
+                tracing::trace!(target: LOG_TARGET, jid, "sending initial chat state `active`");
+
+                self.send_chat_state_active(bare_jid).await;
+            } else {
+                tracing::error!(target: LOG_TARGET, jid, "cannot construct `BareJid`");
+            }
+        }
+    }
+
     async fn process_xmpp_event(&mut self, event: Event) -> anyhow::Result<()> {
         match event {
             Event::Online { .. } => {
@@ -286,6 +300,8 @@ impl Xmpp {
                 self.online = true;
                 self.pre_approve_presence_subscriptions().await;
                 self.send_presence().await;
+                // This will clear "composing" notification from the last run if we previously crashed.
+                self.send_initial_chat_state_active().await;
             }
             Event::Disconnected(error) => {
                 tracing::error!(target: LOG_TARGET, ?error, "disconnected from XMPP server");
