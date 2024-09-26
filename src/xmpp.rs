@@ -24,12 +24,16 @@
 
 use crate::message::Message;
 use anyhow::anyhow;
-use futures::stream::StreamExt;
+use futures::{
+    stream::{BoxStream, StreamExt},
+    FutureExt,
+};
 use std::{collections::HashMap, time::Duration};
 use tokio::{
     sync::mpsc::{error::TrySendError, Receiver, Sender},
     time::MissedTickBehavior,
 };
+use tokio_stream::StreamMap;
 use tokio_xmpp::{starttls::ServerConfig, AsyncClient as XmppClient, Event};
 use xmpp_parsers::{
     jid::BareJid,
@@ -47,6 +51,9 @@ pub const RESPONSES_CHANNEL_SIZE: usize = 1024;
 // Period to send presence with.
 const PRESENSE_INTERVAL: Duration = Duration::from_secs(60);
 
+// Delay before sending back a composing notification.
+const COMPOSING_DELAY: Duration = Duration::from_secs(1);
+
 #[derive(Debug)]
 pub struct Config {
     pub auth_jid: BareJid,
@@ -60,6 +67,7 @@ pub struct Xmpp {
     client: XmppClient<ServerConfig>,
     request_txs_map: HashMap<String, Sender<Message>>,
     response_rx: Receiver<Message>,
+    pending_composing: StreamMap<BareJid, BoxStream<'static, ()>>,
     online: bool,
     clogged_engine: bool,
 }
@@ -80,6 +88,7 @@ impl Xmpp {
             client,
             request_txs_map,
             response_rx,
+            pending_composing: StreamMap::new(),
             online: false,
             clogged_engine: false,
         }
@@ -112,6 +121,7 @@ impl Xmpp {
             return;
         };
 
+        self.pending_composing.remove(&bare_jid);
         self.send_chat_state_active(bare_jid.clone()).await;
         self.send_xmpp_message(bare_jid, message).await;
     }
@@ -170,7 +180,7 @@ impl Xmpp {
 
         match request_tx.try_send(message) {
             Ok(()) => {
-                self.send_chat_state_composing(bare_jid).await;
+                self.schedule_pending_composing(bare_jid);
             }
             Err(e) => match e {
                 TrySendError::Full(_) => {
@@ -191,6 +201,17 @@ impl Xmpp {
         }
 
         Ok(())
+    }
+
+    fn schedule_pending_composing(&mut self, bare_jid: BareJid) {
+        self.pending_composing.insert(
+            bare_jid,
+            async {
+                tokio::time::sleep(COMPOSING_DELAY).await;
+            }
+            .into_stream()
+            .boxed(),
+        );
     }
 
     async fn send_chat_state_notification(&mut self, bare_jid: BareJid, state: &str) {
@@ -314,6 +335,11 @@ impl Xmpp {
                     if self.online {
                         // This makes sure we detect dropped TCP stream and reconnect.
                         self.send_presence().await;
+                    }
+                }
+                event = self.pending_composing.next(), if !self.pending_composing.is_empty() => {
+                    if let Some((bare_jid, ())) = event {
+                        self.send_chat_state_composing(bare_jid).await;
                     }
                 }
             }
