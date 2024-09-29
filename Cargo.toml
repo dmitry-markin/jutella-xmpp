@@ -25,3 +25,4 @@ xmpp-parsers = "0.21.0"
 rustls = "0.23.13"
 futures = "0.3.30"
 reqwest = { version = "0.12.7", default-features = false, features = ["gzip", "json", "hickory-dns", "http2", "rustls-tls", "zstd" ] }
+tokio-stream = "0.1.16"

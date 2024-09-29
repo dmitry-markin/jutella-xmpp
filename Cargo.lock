@@ -1110,6 +1110,7 @@ dependencies = [
  "rustls",
  "serde",
  "tokio",
+ "tokio-stream",
  "tokio-xmpp",
  "toml",
  "tracing",
