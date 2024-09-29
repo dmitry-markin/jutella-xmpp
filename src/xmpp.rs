@@ -166,21 +166,25 @@ impl Xmpp {
             return Ok(());
         }
 
-        let message = Message {
+        let request = Message {
             jid: jid.clone(),
             message: body.0.clone(),
         };
 
-        tracing::debug!(target: LOG_TARGET, jid, len = message.message.len(), "request");
+        tracing::debug!(target: LOG_TARGET, jid, len = request.message.len(), "request");
 
         let request_tx = self
             .request_txs_map
             .get(&jid)
             .expect("was checked above to contain jid; qed");
 
-        match request_tx.try_send(message) {
+        match request_tx.try_send(request) {
             Ok(()) => {
-                self.schedule_pending_composing(bare_jid);
+                self.schedule_pending_composing(bare_jid.clone());
+
+                if let Some(id) = message.id {
+                    self.send_displayed_marker(bare_jid, &id).await;
+                }
             }
             Err(e) => match e {
                 TrySendError::Full(_) => {
@@ -201,6 +205,29 @@ impl Xmpp {
         }
 
         Ok(())
+    }
+
+    async fn send_displayed_marker(&mut self, bare_jid: BareJid, id: &str) {
+        tracing::trace!(target: LOG_TARGET, jid = bare_jid.as_str(), "sending displayed marker");
+
+        let displayed = Element::builder("displayed", "urn:xmpp:chat-markers:0")
+            .attr("id", id)
+            .build();
+        let message =
+            XmppMessage::new(Some(bare_jid.clone().into())).with_payloads(vec![displayed]);
+
+        self.client
+            .send_stanza(message.into())
+            .await
+            .inspect_err(|error| {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    jid = bare_jid.as_str(),
+                    ?error,
+                    "error sending displayed marker",
+                );
+            })
+            .unwrap_or_default();
     }
 
     fn schedule_pending_composing(&mut self, bare_jid: BareJid) {
