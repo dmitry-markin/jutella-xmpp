@@ -38,6 +38,7 @@ pub struct ChatbotHandlerConfig {
     pub api_version: Option<String>,
     pub model: String,
     pub system_message: Option<String>,
+    pub min_history_tokens: Option<usize>,
     pub max_history_tokens: usize,
     pub reqwest_client: reqwest::Client,
     pub response_tx: Sender<Message>,
@@ -61,6 +62,7 @@ impl ChatbotHandler {
             api_version,
             model,
             system_message,
+            min_history_tokens,
             max_history_tokens,
             reqwest_client,
             response_tx,
@@ -74,6 +76,7 @@ impl ChatbotHandler {
                 api_version,
                 model,
                 system_message,
+                min_history_tokens,
                 max_history_tokens: Some(max_history_tokens),
             },
         )?;

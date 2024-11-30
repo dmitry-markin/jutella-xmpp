@@ -58,6 +58,7 @@ async fn main() -> anyhow::Result<()> {
         api_auth,
         model,
         system_message,
+        min_history_tokens,
         max_history_tokens,
     } = Config::load().context("Failed to load config")?;
 
@@ -66,6 +67,7 @@ async fn main() -> anyhow::Result<()> {
         api_url,
         api_version,
         model,
+        min_history_tokens,
         max_history_tokens,
         "configuration",
     );
@@ -78,6 +80,7 @@ async fn main() -> anyhow::Result<()> {
         api_auth,
         model,
         system_message,
+        min_history_tokens,
         max_history_tokens,
         allowed_users,
         response_tx,
