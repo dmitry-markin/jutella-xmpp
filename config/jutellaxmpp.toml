@@ -26,5 +26,14 @@ model = "gpt-4o-mini"
 # Optional system message to initialize the model.
 system_message = "You are a helpful assistant."
 
+# Optional minimum conversation history to keep in the context.
+#
+# The context will be truncated to keep at least `min_history_tokens`, but
+# no more than one request-response above this threshold, and under
+# no circumstances more than `max_history_tokens`.
+# This method of context truncation ensures that at least the latest round
+# of messages is always kept (unless `max_history_tokens` kicks in).
+min_history_tokens = 1000
+
 # Maximum number of tokens to keep in every conversation.
 max_history_tokens = 2500
