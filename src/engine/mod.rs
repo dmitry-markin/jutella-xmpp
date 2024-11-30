@@ -26,7 +26,7 @@ mod handler;
 
 use crate::{
     engine::handler::{ChatbotHandler, ChatbotHandlerConfig},
-    message::Message,
+    message::{RequestMessage, ResponseMessage},
 };
 use anyhow::Context as _;
 use futures::{
@@ -57,7 +57,7 @@ pub struct Config {
     pub min_history_tokens: Option<usize>,
     pub max_history_tokens: usize,
     pub allowed_users: Vec<String>,
-    pub response_tx: Sender<Message>,
+    pub response_tx: Sender<ResponseMessage>,
 }
 
 pub struct ChatbotEngine {
@@ -65,7 +65,7 @@ pub struct ChatbotEngine {
 }
 
 impl ChatbotEngine {
-    pub fn new(config: Config) -> anyhow::Result<(Self, HashMap<String, Sender<Message>>)> {
+    pub fn new(config: Config) -> anyhow::Result<(Self, HashMap<String, Sender<RequestMessage>>)> {
         let Config {
             api_url,
             api_version,
