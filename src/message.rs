@@ -20,9 +20,18 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-// Message passed from XMPP engine to chatbot and back.
+/// Message passed from XMPP engine to chatbot.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Message {
+pub struct RequestMessage {
     pub jid: String,
-    pub message: String,
+    pub request: String,
+}
+
+/// Message passed from chatbot back to XMPP engine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResponseMessage {
+    pub jid: String,
+    pub response: String,
+    pub tokens_in: usize,
+    pub tokens_out: usize,
 }

@@ -22,7 +22,7 @@
 
 //! XMPP agent.
 
-use crate::message::Message;
+use crate::message::{RequestMessage, ResponseMessage};
 use anyhow::anyhow;
 use futures::{
     stream::{BoxStream, StreamExt},
@@ -58,15 +58,15 @@ const COMPOSING_DELAY: Duration = Duration::from_secs(1);
 pub struct Config {
     pub auth_jid: BareJid,
     pub auth_password: String,
-    pub request_txs_map: HashMap<String, Sender<Message>>,
-    pub response_rx: Receiver<Message>,
+    pub request_txs_map: HashMap<String, Sender<RequestMessage>>,
+    pub response_rx: Receiver<ResponseMessage>,
 }
 
 /// XMPP agent
 pub struct Xmpp {
     client: XmppClient<ServerConfig>,
-    request_txs_map: HashMap<String, Sender<Message>>,
-    response_rx: Receiver<Message>,
+    request_txs_map: HashMap<String, Sender<RequestMessage>>,
+    response_rx: Receiver<ResponseMessage>,
     pending_composing: StreamMap<BareJid, BoxStream<'static, ()>>,
     online: bool,
     clogged_engine: bool,
@@ -108,10 +108,22 @@ impl Xmpp {
             .unwrap_or_default();
     }
 
-    async fn process_response(&mut self, message: Message) {
-        let Message { jid, message } = message;
+    async fn process_response(&mut self, resp: ResponseMessage) {
+        let ResponseMessage {
+            jid,
+            response,
+            tokens_in,
+            tokens_out,
+        } = resp;
 
-        tracing::debug!(target: LOG_TARGET, jid, len = message.len(), "response");
+        tracing::debug!(
+            target: LOG_TARGET,
+            jid,
+            len = response.len(),
+            tokens_in,
+            tokens_out,
+            "response"
+        );
 
         let Ok(bare_jid) = BareJid::new(&jid) else {
             // This must not happen as jids were checked to compare equal to string representation
@@ -123,7 +135,7 @@ impl Xmpp {
 
         self.pending_composing.remove(&bare_jid);
         self.send_chat_state_active(bare_jid.clone()).await;
-        self.send_xmpp_message(bare_jid, message).await;
+        self.send_xmpp_message(bare_jid, response).await;
     }
 
     async fn process_xmpp_message(&mut self, message: XmppMessage) -> anyhow::Result<()> {
@@ -166,19 +178,19 @@ impl Xmpp {
             return Ok(());
         }
 
-        let request = Message {
+        let req = RequestMessage {
             jid: jid.clone(),
-            message: body.0.clone(),
+            request: body.0.clone(),
         };
 
-        tracing::debug!(target: LOG_TARGET, jid, len = request.message.len(), "request");
+        tracing::debug!(target: LOG_TARGET, jid, len = req.request.len(), "request");
 
         let request_tx = self
             .request_txs_map
             .get(&jid)
             .expect("was checked above to contain jid; qed");
 
-        match request_tx.try_send(request) {
+        match request_tx.try_send(req) {
             Ok(()) => {
                 self.schedule_pending_composing(bare_jid.clone());
 

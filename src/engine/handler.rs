@@ -22,9 +22,9 @@
 
 //! Chatbot chat handler.
 
-use crate::message::Message;
+use crate::message::{RequestMessage, ResponseMessage};
 use anyhow::anyhow;
-use jutella::{ChatClient, ChatClientConfig};
+use jutella::{ChatClient, ChatClientConfig, Completion};
 use tokio::sync::mpsc::{error::TrySendError, Receiver, Sender};
 
 // Log target for this file.
@@ -38,18 +38,19 @@ pub struct ChatbotHandlerConfig {
     pub api_version: Option<String>,
     pub model: String,
     pub system_message: Option<String>,
+    pub min_history_tokens: Option<usize>,
     pub max_history_tokens: usize,
     pub reqwest_client: reqwest::Client,
-    pub response_tx: Sender<Message>,
-    pub request_rx: Receiver<Message>,
+    pub response_tx: Sender<ResponseMessage>,
+    pub request_rx: Receiver<RequestMessage>,
 }
 
 /// Single chatbot conversation handler.
 pub struct ChatbotHandler {
     jid: String,
     client: ChatClient,
-    response_tx: Sender<Message>,
-    request_rx: Receiver<Message>,
+    response_tx: Sender<ResponseMessage>,
+    request_rx: Receiver<RequestMessage>,
     clogged: bool,
 }
 
@@ -61,6 +62,7 @@ impl ChatbotHandler {
             api_version,
             model,
             system_message,
+            min_history_tokens,
             max_history_tokens,
             reqwest_client,
             response_tx,
@@ -74,6 +76,7 @@ impl ChatbotHandler {
                 api_version,
                 model,
                 system_message,
+                min_history_tokens,
                 max_history_tokens: Some(max_history_tokens),
             },
         )?;
@@ -87,8 +90,8 @@ impl ChatbotHandler {
         })
     }
 
-    async fn handle_message(&mut self, message: Message) -> anyhow::Result<()> {
-        let Message { jid, message } = message;
+    async fn handle_request(&mut self, req: RequestMessage) -> anyhow::Result<()> {
+        let RequestMessage { jid, request } = req;
 
         if jid != self.jid {
             tracing::error!(
@@ -101,18 +104,30 @@ impl ChatbotHandler {
             return Err(anyhow!("jid mismatch in request handler"));
         }
 
-        let message = match self.client.ask(message).await {
-            Ok(reply) => reply,
-            Err(error) => {
+        let Completion {
+            response,
+            tokens_in,
+            tokens_out,
+        } = self
+            .client
+            .request_completion(request)
+            .await
+            .unwrap_or_else(|error| {
                 tracing::warn!(target: LOG_TARGET, jid, "error from chatbot API: {error}");
 
-                format!("[ERROR] {error}")
-            }
-        };
+                Completion {
+                    response: format!("[ERROR] {error}"),
+                    tokens_in: 0,
+                    tokens_out: 0,
+                }
+                // TODO: return real token count once `jutella` supports it in errors.
+            });
 
-        if let Err(e) = self.response_tx.try_send(Message {
+        if let Err(e) = self.response_tx.try_send(ResponseMessage {
             jid: jid.clone(),
-            message,
+            response,
+            tokens_in,
+            tokens_out,
         }) {
             match e {
                 TrySendError::Closed(_) => return Err(anyhow!("responses channel closed")),
@@ -135,8 +150,8 @@ impl ChatbotHandler {
 
     pub async fn run(mut self) -> anyhow::Result<()> {
         loop {
-            if let Some(message) = self.request_rx.recv().await {
-                self.handle_message(message).await?;
+            if let Some(req) = self.request_rx.recv().await {
+                self.handle_request(req).await?;
             } else {
                 return Ok(());
             }

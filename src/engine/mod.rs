@@ -26,7 +26,7 @@ mod handler;
 
 use crate::{
     engine::handler::{ChatbotHandler, ChatbotHandlerConfig},
-    message::Message,
+    message::{RequestMessage, ResponseMessage},
 };
 use anyhow::Context as _;
 use futures::{
@@ -54,9 +54,10 @@ pub struct Config {
     pub api_auth: jutella::Auth,
     pub model: String,
     pub system_message: Option<String>,
+    pub min_history_tokens: Option<usize>,
     pub max_history_tokens: usize,
     pub allowed_users: Vec<String>,
-    pub response_tx: Sender<Message>,
+    pub response_tx: Sender<ResponseMessage>,
 }
 
 pub struct ChatbotEngine {
@@ -64,13 +65,14 @@ pub struct ChatbotEngine {
 }
 
 impl ChatbotEngine {
-    pub fn new(config: Config) -> anyhow::Result<(Self, HashMap<String, Sender<Message>>)> {
+    pub fn new(config: Config) -> anyhow::Result<(Self, HashMap<String, Sender<RequestMessage>>)> {
         let Config {
             api_url,
             api_version,
             api_auth,
             model,
             system_message,
+            min_history_tokens,
             max_history_tokens,
             allowed_users,
             response_tx,
@@ -92,6 +94,7 @@ impl ChatbotEngine {
                 api_version: api_version.clone(),
                 model: model.clone(),
                 system_message: system_message.clone(),
+                min_history_tokens,
                 max_history_tokens,
                 reqwest_client: reqwest_client.clone(),
                 request_rx,
