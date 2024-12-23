@@ -25,7 +25,7 @@ sudo useradd --system --shell /sbin/nologin --home-dir /nonexistent jutella
 ### Install the config
 
 1. Copy the config [example](https://github.com/dmitry-markin/jutella-xmpp/blob/master/config/jutellaxmpp.toml) to `/etc`.
-2. Make it accessible by root only: `sudo chmod 600 /etc/jutellaxmpp.toml`.
+2. Make it accessible by root only: `sudo chmod 640 /etc/jutellaxmpp.toml`.
 3. Edit the config to match your configuration.
 4. Make the config readable by user `jutella`: `sudo setfacl -m user:jutella:r /etc/jutellaxmpp.toml`.
 5. You will need to repeat step 4 after every edit if using `vim`, as it does not preserve ACL.
