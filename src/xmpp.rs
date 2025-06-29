@@ -343,8 +343,11 @@ impl Xmpp {
                 self.send_initial_chat_state_active().await;
             }
             Event::Disconnected(error) => {
-                tracing::error!(target: LOG_TARGET, ?error, "disconnected from XMPP server");
-                self.online = false;
+                // Make sure to not spam with error during every reconnection attemp.
+                if self.online {
+                    tracing::error!(target: LOG_TARGET, ?error, "disconnected from XMPP server");
+                    self.online = false;
+                }
             }
             Event::Stanza(stanza) => {
                 if let Ok(message) = XmppMessage::try_from(stanza) {
