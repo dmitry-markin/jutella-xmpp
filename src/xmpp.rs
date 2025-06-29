@@ -401,11 +401,12 @@ impl Xmpp {
                         return Err(anyhow!("XMPP event stream was closed, terminating"))
                     }
                 }
-                message = self.response_rx.recv() => {
+                // TODO: checking for `self.online` here is a band-aid to reduce the chances of
+                // losing responses. Ideally, we should queue responses and only discard them
+                // once they have been sent out without errors.
+                message = self.response_rx.recv(), if self.online => {
                     if let Some(message) = message {
                         self.process_response(message).await;
-                        // TODO: queue responses if sending fails due to XMPP client being
-                        // disconnected.
                     } else {
                         tracing::trace!(target: LOG_TARGET, "response channel closed, shutting down");
                         return Ok(())
