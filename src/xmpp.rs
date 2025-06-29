@@ -45,6 +45,10 @@ use xmpp_parsers::{
 // Log target for this file.
 const LOG_TARGET: &str = "jutella::xmpp";
 
+// Delay before reconnecting to XMPP server. Built-in `tokio_xmpp` reconnect is too agressive
+// and wastes up to 50% of a CPU core by reconnecting without a delay.
+const RECONNECT_DELAY: Duration = Duration::from_secs(1);
+
 // Responses channel size.
 pub const RESPONSES_CHANNEL_SIZE: usize = 1024;
 
@@ -64,6 +68,8 @@ pub struct Config {
 
 /// XMPP agent
 pub struct Xmpp {
+    auth_jid: BareJid,
+    auth_password: String,
     client: XmppClient<ServerConfig>,
     request_txs_map: HashMap<String, Sender<RequestMessage>>,
     response_rx: Receiver<ResponseMessage>,
@@ -81,10 +87,11 @@ impl Xmpp {
             response_rx,
         } = config;
 
-        let mut client = XmppClient::new(auth_jid, auth_password);
-        client.set_reconnect(true);
+        let client = XmppClient::new(auth_jid.clone(), auth_password.clone());
 
         Self {
+            auth_jid,
+            auth_password,
             client,
             request_txs_map,
             response_rx,
@@ -92,6 +99,10 @@ impl Xmpp {
             online: false,
             clogged_engine: false,
         }
+    }
+
+    fn reconnect(&mut self) {
+        self.client = XmppClient::new(self.auth_jid.clone(), self.auth_password.clone());
     }
 
     async fn send_xmpp_message(&mut self, bare_jid: BareJid, message: String) {
@@ -345,9 +356,17 @@ impl Xmpp {
             Event::Disconnected(error) => {
                 // Make sure to not spam with error during every reconnection attemp.
                 if self.online {
-                    tracing::error!(target: LOG_TARGET, ?error, "disconnected from XMPP server");
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?error,
+                        "disconnected from XMPP server, reconnecting",
+                    );
                     self.online = false;
                 }
+                // It is safe to sleep here, because we don't have any events to process while
+                // XMPP cllient is disconnected.
+                tokio::time::sleep(RECONNECT_DELAY).await;
+                self.reconnect();
             }
             Event::Stanza(stanza) => {
                 if let Ok(message) = XmppMessage::try_from(stanza) {
@@ -385,7 +404,10 @@ impl Xmpp {
                 message = self.response_rx.recv() => {
                     if let Some(message) = message {
                         self.process_response(message).await;
+                        // TODO: queue responses if sending fails due to XMPP client being
+                        // disconnected.
                     } else {
+                        tracing::trace!(target: LOG_TARGET, "response channel closed, shutting down");
                         return Ok(())
                     }
                 }
