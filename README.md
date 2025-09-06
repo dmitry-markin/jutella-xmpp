@@ -4,7 +4,7 @@
 
 XMPP – OpenAI API bridge based on [tokio-xmpp](https://docs.rs/tokio-xmpp/latest/tokio_xmpp/) and [jutella](https://github.com/dmitry-markin/jutella).
 
-Supports OpenAI and Azure endpoints and implements rolling context window to reduce costs.
+Supports OpenAI, Azure, and OpenRouter API flavors and implements rolling context window.
 
 ## Installation
 
