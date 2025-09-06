@@ -49,11 +49,14 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 /// Configuration for [`Jutella`].
 #[derive(Debug)]
 pub struct Config {
+    pub api_type: jutella::ApiType,
     pub api_url: String,
     pub api_version: Option<String>,
     pub api_auth: jutella::Auth,
     pub model: String,
     pub system_message: Option<String>,
+    pub reasoning_effort: Option<String>,
+    pub verbosity: Option<String>,
     pub min_history_tokens: Option<usize>,
     pub max_history_tokens: usize,
     pub allowed_users: Vec<String>,
@@ -67,11 +70,14 @@ pub struct ChatbotEngine {
 impl ChatbotEngine {
     pub fn new(config: Config) -> anyhow::Result<(Self, HashMap<String, Sender<RequestMessage>>)> {
         let Config {
+            api_type,
             api_url,
             api_version,
             api_auth,
             model,
             system_message,
+            reasoning_effort,
+            verbosity,
             min_history_tokens,
             max_history_tokens,
             allowed_users,
@@ -90,10 +96,13 @@ impl ChatbotEngine {
 
             let handler_config = ChatbotHandlerConfig {
                 jid: jid.clone(),
+                api_type,
                 api_url: api_url.clone(),
                 api_version: api_version.clone(),
                 model: model.clone(),
                 system_message: system_message.clone(),
+                reasoning_effort: reasoning_effort.clone(),
+                verbosity: verbosity.clone(),
                 min_history_tokens,
                 max_history_tokens,
                 reqwest_client: reqwest_client.clone(),

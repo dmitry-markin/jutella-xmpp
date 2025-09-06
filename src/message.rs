@@ -33,5 +33,7 @@ pub struct ResponseMessage {
     pub jid: String,
     pub response: String,
     pub tokens_in: usize,
+    pub tokens_in_cached: Option<usize>,
     pub tokens_out: usize,
+    pub tokens_reasoning: Option<usize>,
 }

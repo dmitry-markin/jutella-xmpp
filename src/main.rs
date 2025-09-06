@@ -53,11 +53,14 @@ async fn main() -> anyhow::Result<()> {
         auth_jid,
         auth_password,
         allowed_users,
+        api_type,
         api_url,
         api_version,
         api_auth,
         model,
         system_message,
+        reasoning_effort,
+        verbosity,
         min_history_tokens,
         max_history_tokens,
     } = Config::load().context("Failed to load config")?;
@@ -75,11 +78,14 @@ async fn main() -> anyhow::Result<()> {
     let (response_tx, response_rx) = channel(RESPONSES_CHANNEL_SIZE);
 
     let (chatbot_engine, request_txs_map) = ChatbotEngine::new(ChatbotEngineConfig {
+        api_type,
         api_url,
         api_version,
         api_auth,
         model,
         system_message,
+        reasoning_effort,
+        verbosity,
         min_history_tokens,
         max_history_tokens,
         allowed_users,

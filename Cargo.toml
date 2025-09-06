@@ -11,18 +11,18 @@ name = "jutellaxmpp"
 path = "src/main.rs"
 
 [dependencies]
-anyhow = "1.0.89"
-jutella = { version = "0.4.0", default-features = false }
-clap = { version = "4.5.18", features = ["derive", "wrap_help"] }
-serde = { version = "1.0.210", features = ["derive"] }
-tokio = { version = "1.40.0", features = ["macros", "rt-multi-thread"] }
-toml = "0.8.19"
-tracing = "0.1.40"
+anyhow = "1.0.99"
+jutella = { version = "0.5.0", default-features = false }
+clap = { version = "4.5.47", features = ["derive", "wrap_help"] }
+serde = { version = "1.0.219", features = ["derive"] }
+tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread"] }
+toml = "0.9.5"
+tracing = "0.1.41"
 tracing-log = "0.2.0"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 tokio-xmpp = "4.0.0"
 xmpp-parsers = "0.21.0"
-rustls = "0.23.13"
-futures = "0.3.30"
-reqwest = { version = "0.12.7", default-features = false, features = ["gzip", "json", "hickory-dns", "http2", "rustls-tls", "zstd" ] }
-tokio-stream = "0.1.16"
+rustls = "0.23.31"
+futures = "0.3.31"
+reqwest = { version = "0.12.23", default-features = false, features = ["gzip", "json", "hickory-dns", "http2", "rustls-tls", "zstd" ] }
+tokio-stream = "0.1.17"

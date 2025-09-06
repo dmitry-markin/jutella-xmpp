@@ -7,6 +7,9 @@ password = "<password>"
 # Users allowed to use the chatbot.
 allowed_users = ["alex@xmpp.com", "john@example.com"]
 
+# API flavor. Either `openai` or `openrouter`.
+#api = "openai"
+
 # OpenAI API base URL. Everything before `chat/completions` in the URL.
 api_url = "https://api.openai.com/v1/"
 
@@ -25,6 +28,14 @@ model = "gpt-4o-mini"
 
 # Optional system message to initialize the model.
 system_message = "You are a helpful assistant."
+
+# Optional reasoning effort. Passed as is to the API. Typical values are:
+# `minimal`, `low`, `medium`, or `high`.
+#reasoning_effort = "medium"
+
+# Optional verbosity of the answers. Passed as is to the API. Typical values are:
+# `low`, `medium`, or `high`.
+#verbosity = "medium"
 
 # Optional minimum conversation history to keep in the context.
 #

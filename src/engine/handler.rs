@@ -24,7 +24,7 @@
 
 use crate::message::{RequestMessage, ResponseMessage};
 use anyhow::anyhow;
-use jutella::{ChatClient, ChatClientConfig, Completion};
+use jutella::{ApiType, ChatClient, ChatClientConfig, Completion};
 use tokio::sync::mpsc::{error::TrySendError, Receiver, Sender};
 
 // Log target for this file.
@@ -34,10 +34,13 @@ const LOG_TARGET: &str = "jutella::handler";
 #[derive(Debug)]
 pub struct ChatbotHandlerConfig {
     pub jid: String,
+    pub api_type: ApiType,
     pub api_url: String,
     pub api_version: Option<String>,
     pub model: String,
     pub system_message: Option<String>,
+    pub reasoning_effort: Option<String>,
+    pub verbosity: Option<String>,
     pub min_history_tokens: Option<usize>,
     pub max_history_tokens: usize,
     pub reqwest_client: reqwest::Client,
@@ -58,10 +61,13 @@ impl ChatbotHandler {
     pub fn new(config: ChatbotHandlerConfig) -> Result<Self, jutella::Error> {
         let ChatbotHandlerConfig {
             jid,
+            api_type,
             api_url,
             api_version,
             model,
             system_message,
+            reasoning_effort,
+            verbosity,
             min_history_tokens,
             max_history_tokens,
             reqwest_client,
@@ -72,10 +78,13 @@ impl ChatbotHandler {
         let client = ChatClient::new_with_client(
             reqwest_client,
             ChatClientConfig {
+                api_type,
                 api_url,
                 api_version,
                 model,
                 system_message,
+                reasoning_effort,
+                verbosity,
                 min_history_tokens,
                 max_history_tokens: Some(max_history_tokens),
             },
@@ -107,7 +116,9 @@ impl ChatbotHandler {
         let Completion {
             response,
             tokens_in,
+            tokens_in_cached,
             tokens_out,
+            tokens_reasoning,
         } = self
             .client
             .request_completion(request)
@@ -118,7 +129,9 @@ impl ChatbotHandler {
                 Completion {
                     response: format!("[ERROR] {error}"),
                     tokens_in: 0,
+                    tokens_in_cached: None,
                     tokens_out: 0,
+                    tokens_reasoning: None,
                 }
                 // TODO: return real token count once `jutella` supports it in errors.
             });
@@ -127,7 +140,9 @@ impl ChatbotHandler {
             jid: jid.clone(),
             response,
             tokens_in,
+            tokens_in_cached,
             tokens_out,
+            tokens_reasoning,
         }) {
             match e {
                 TrySendError::Closed(_) => return Err(anyhow!("responses channel closed")),
