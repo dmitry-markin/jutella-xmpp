@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.89"
-jutella = { version = "0.4.0", default-features = false }
+jutella = { version = "0.5.0", default-features = false }
 clap = { version = "4.5.18", features = ["derive", "wrap_help"] }
 serde = { version = "1.0.210", features = ["derive"] }
 tokio = { version = "1.40.0", features = ["macros", "rt-multi-thread"] }

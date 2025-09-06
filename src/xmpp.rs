@@ -124,7 +124,9 @@ impl Xmpp {
             jid,
             response,
             tokens_in,
+            tokens_in_cached,
             tokens_out,
+            tokens_reasoning,
         } = resp;
 
         tracing::debug!(
@@ -132,7 +134,15 @@ impl Xmpp {
             jid,
             len = response.len(),
             tokens_in,
+            tokens_cached = tokens_in_cached.and_then(|v| match v {
+                0 => None,
+                v => Some(v),
+            }),
             tokens_out,
+            tokens_reasoning = tokens_reasoning.and_then(|v| match v {
+                0 => None,
+                v => Some(v),
+            }),
             "response"
         );
 
