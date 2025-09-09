@@ -24,7 +24,7 @@
 
 use anyhow::{anyhow, Context as _};
 use clap::Parser;
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, str::FromStr};
 use xmpp_parsers::jid::BareJid;
 
 #[derive(Debug, Parser)]
@@ -48,6 +48,7 @@ struct ConfigFile {
     model: String,
     system_message: Option<String>,
     reasoning_effort: Option<String>,
+    reasoning_budget: Option<i64>,
     verbosity: Option<String>,
     min_history_tokens: Option<usize>,
     max_history_tokens: usize,
@@ -71,16 +72,33 @@ pub struct Config {
     pub auth_jid: BareJid,
     pub auth_password: String,
     pub allowed_users: Vec<String>,
-    pub api_type: jutella::ApiType,
     pub api_url: String,
+    pub api_options: jutella::ApiOptions,
     pub api_version: Option<String>,
     pub api_auth: jutella::Auth,
     pub model: String,
     pub system_message: Option<String>,
-    pub reasoning_effort: Option<String>,
     pub verbosity: Option<String>,
     pub min_history_tokens: Option<usize>,
     pub max_history_tokens: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ApiType {
+    OpenAi,
+    OpenRouter,
+}
+
+impl FromStr for ApiType {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "openai" => Ok(ApiType::OpenAi),
+            "openrouter" => Ok(ApiType::OpenRouter),
+            _ => Err(anyhow!("Unsupported API flavor in config: {}", s)),
+        }
+    }
 }
 
 impl Config {
@@ -98,6 +116,7 @@ impl Config {
             model,
             system_message,
             reasoning_effort,
+            reasoning_budget,
             verbosity,
             min_history_tokens,
             max_history_tokens,
@@ -115,13 +134,27 @@ impl Config {
             }
         };
 
-        let api_type = match api.as_deref() {
-            Some("openai") | None => jutella::ApiType::OpenAi,
-            Some("openrouter") => jutella::ApiType::OpenRouter,
-            Some(other) => {
+        let api_type = api
+            .as_deref()
+            .map_or(Ok(ApiType::OpenAi), ApiType::from_str)?;
+
+        let api_options = match (api_type, reasoning_effort, reasoning_budget) {
+            (ApiType::OpenAi, effort, None) => jutella::ApiOptions::OpenAi {
+                reasoning_effort: effort,
+            },
+            (ApiType::OpenRouter, None, None) => {
+                jutella::ApiOptions::OpenRouter { reasoning: None }
+            }
+            (ApiType::OpenRouter, Some(effort), None) => jutella::ApiOptions::OpenRouter {
+                reasoning: Some(jutella::ReasoningSettings::Effort(effort)),
+            },
+            (ApiType::OpenRouter, None, Some(budget)) => jutella::ApiOptions::OpenRouter {
+                reasoning: Some(jutella::ReasoningSettings::Budget(budget)),
+            },
+            _ => {
                 return Err(anyhow!(
-                    "Unsupported API flavor: {}. Supported flavors are: `openai`, `openrouter`",
-                    other
+                    "Only one of `reasoning_effort` or `reasoning_budget` can be supplied. \
+                     `reasoning_budget` is only supported by OpenRouter API."
                 ))
             }
         };
@@ -130,13 +163,12 @@ impl Config {
             auth_jid,
             auth_password: password,
             allowed_users,
-            api_type,
             api_url,
+            api_options,
             api_version,
             api_auth,
             model,
             system_message,
-            reasoning_effort,
             verbosity,
             min_history_tokens,
             max_history_tokens,

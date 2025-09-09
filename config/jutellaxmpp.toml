@@ -33,6 +33,10 @@ system_message = "You are a helpful assistant."
 # `minimal`, `low`, `medium`, or `high`.
 #reasoning_effort = "medium"
 
+# Optional reasoning budget (max tokens). Only supported by OpenRouter API. Only one of
+# `reasoning_effort` & `reasoning_budget` can be supplied at the same time.
+#reasoning_budget = 128
+
 # Optional verbosity of the answers. Passed as is to the API. Typical values are:
 # `low`, `medium`, or `high`.
 #verbosity = "medium"
