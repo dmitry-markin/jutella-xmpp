@@ -24,7 +24,7 @@
 
 use crate::message::{RequestMessage, ResponseMessage};
 use anyhow::anyhow;
-use jutella::{ApiType, ChatClient, ChatClientConfig, Completion};
+use jutella::{ApiOptions, ChatClient, ChatClientConfig, Completion};
 use tokio::sync::mpsc::{error::TrySendError, Receiver, Sender};
 
 // Log target for this file.
@@ -34,12 +34,11 @@ const LOG_TARGET: &str = "jutella::handler";
 #[derive(Debug)]
 pub struct ChatbotHandlerConfig {
     pub jid: String,
-    pub api_type: ApiType,
     pub api_url: String,
+    pub api_options: ApiOptions,
     pub api_version: Option<String>,
     pub model: String,
     pub system_message: Option<String>,
-    pub reasoning_effort: Option<String>,
     pub verbosity: Option<String>,
     pub min_history_tokens: Option<usize>,
     pub max_history_tokens: usize,
@@ -61,12 +60,11 @@ impl ChatbotHandler {
     pub fn new(config: ChatbotHandlerConfig) -> Result<Self, jutella::Error> {
         let ChatbotHandlerConfig {
             jid,
-            api_type,
             api_url,
+            api_options,
             api_version,
             model,
             system_message,
-            reasoning_effort,
             verbosity,
             min_history_tokens,
             max_history_tokens,
@@ -78,12 +76,11 @@ impl ChatbotHandler {
         let client = ChatClient::new_with_client(
             reqwest_client,
             ChatClientConfig {
-                api_type,
                 api_url,
+                api_options,
                 api_version,
                 model,
                 system_message,
-                reasoning_effort,
                 verbosity,
                 min_history_tokens,
                 max_history_tokens: Some(max_history_tokens),
@@ -115,6 +112,7 @@ impl ChatbotHandler {
 
         let Completion {
             response,
+            reasoning: _,
             tokens_in,
             tokens_in_cached,
             tokens_out,
@@ -128,6 +126,7 @@ impl ChatbotHandler {
 
                 Completion {
                     response: format!("[ERROR] {error}"),
+                    reasoning: None,
                     tokens_in: 0,
                     tokens_in_cached: None,
                     tokens_out: 0,
