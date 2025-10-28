@@ -24,25 +24,29 @@
 
 use crate::message::{RequestMessage, ResponseMessage};
 use anyhow::anyhow;
-use jutella::{ApiOptions, ChatClient, ChatClientConfig, Completion};
+use jutella::{ApiOptions, Auth, ChatClient, ChatClientConfig, Completion, TokenUsage};
+use std::{sync::Arc, time::Duration};
 use tokio::sync::mpsc::{error::TrySendError, Receiver, Sender};
 
 // Log target for this file.
 const LOG_TARGET: &str = "jutella::handler";
 
 /// Configuration of [`ChatbotHandler`]
-#[derive(Debug)]
+// Can't implement `Debug` due to `tiktoken_rs::CoreBPE` not implementing it.
 pub struct ChatbotHandlerConfig {
     pub jid: String,
     pub api_url: String,
     pub api_options: ApiOptions,
     pub api_version: Option<String>,
+    pub auth: Auth,
+    pub http_timeout: Duration,
     pub model: String,
     pub system_message: Option<String>,
     pub verbosity: Option<String>,
     pub min_history_tokens: Option<usize>,
     pub max_history_tokens: usize,
     pub reqwest_client: reqwest::Client,
+    pub tokenizer: Arc<tiktoken_rs::CoreBPE>,
     pub response_tx: Sender<ResponseMessage>,
     pub request_rx: Receiver<RequestMessage>,
 }
@@ -63,28 +67,34 @@ impl ChatbotHandler {
             api_url,
             api_options,
             api_version,
+            auth,
+            http_timeout,
             model,
             system_message,
             verbosity,
             min_history_tokens,
             max_history_tokens,
             reqwest_client,
+            tokenizer,
             response_tx,
             request_rx,
         } = config;
 
-        let client = ChatClient::new_with_client(
-            reqwest_client,
+        let client = ChatClient::new_with_client_and_tokenizer(
             ChatClientConfig {
                 api_url,
                 api_options,
                 api_version,
+                auth,
+                http_timeout,
                 model,
                 system_message,
                 verbosity,
                 min_history_tokens,
                 max_history_tokens: Some(max_history_tokens),
             },
+            reqwest_client,
+            tokenizer,
         )?;
 
         Ok(Self {
@@ -113,10 +123,13 @@ impl ChatbotHandler {
         let Completion {
             response,
             reasoning: _,
-            tokens_in,
-            tokens_in_cached,
-            tokens_out,
-            tokens_reasoning,
+            token_usage:
+                TokenUsage {
+                    tokens_in,
+                    tokens_in_cached,
+                    tokens_out,
+                    tokens_reasoning,
+                },
         } = self
             .client
             .request_completion(request)
@@ -127,12 +140,14 @@ impl ChatbotHandler {
                 Completion {
                     response: format!("[ERROR] {error}"),
                     reasoning: None,
-                    tokens_in: 0,
-                    tokens_in_cached: None,
-                    tokens_out: 0,
-                    tokens_reasoning: None,
+                    // TODO: return real token count once `jutella` supports it in errors.
+                    token_usage: TokenUsage {
+                        tokens_in: 0,
+                        tokens_in_cached: None,
+                        tokens_out: 0,
+                        tokens_reasoning: None,
+                    },
                 }
-                // TODO: return real token count once `jutella` supports it in errors.
             });
 
         if let Err(e) = self.response_tx.try_send(ResponseMessage {

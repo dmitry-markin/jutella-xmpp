@@ -33,8 +33,7 @@ use futures::{
     future::{BoxFuture, FutureExt},
     stream::{FuturesUnordered, StreamExt},
 };
-use reqwest::ClientBuilder;
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::mpsc::{channel, Sender};
 
 // Log target for this file.
@@ -43,9 +42,6 @@ const LOG_TARGET: &str = "jutella::engine";
 // If we have 100 pending messages from user, something is extremely odd.
 pub const REQUESTS_CHANNEL_SIZE: usize = 100;
 
-// HTTP request timeout.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
-
 /// Configuration for [`Jutella`].
 #[derive(Debug)]
 pub struct Config {
@@ -53,6 +49,7 @@ pub struct Config {
     pub api_options: jutella::ApiOptions,
     pub api_version: Option<String>,
     pub api_auth: jutella::Auth,
+    pub http_timeout: Duration,
     pub model: String,
     pub system_message: Option<String>,
     pub verbosity: Option<String>,
@@ -73,6 +70,7 @@ impl ChatbotEngine {
             api_options,
             api_version,
             api_auth,
+            http_timeout,
             model,
             system_message,
             verbosity,
@@ -82,11 +80,8 @@ impl ChatbotEngine {
             response_tx,
         } = config;
 
-        let reqwest_client = ClientBuilder::new()
-            .default_headers(api_auth.try_into()?)
-            .timeout(REQUEST_TIMEOUT)
-            .build()
-            .context("Failed to initialize HTTP client")?;
+        let reqwest_client = reqwest::Client::new();
+        let tokenizer = Arc::new(tiktoken_rs::o200k_base()?);
 
         let handlers = allowed_users.into_iter().map(|jid| {
             // Channel `engine` -> `handler`
@@ -97,12 +92,15 @@ impl ChatbotEngine {
                 api_url: api_url.clone(),
                 api_options: api_options.clone(),
                 api_version: api_version.clone(),
+                auth: api_auth.clone(),
+                http_timeout,
                 model: model.clone(),
                 system_message: system_message.clone(),
                 verbosity: verbosity.clone(),
                 min_history_tokens,
                 max_history_tokens,
                 reqwest_client: reqwest_client.clone(),
+                tokenizer: tokenizer.clone(),
                 request_rx,
                 response_tx: response_tx.clone(),
             };
