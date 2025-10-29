@@ -24,8 +24,10 @@
 
 use anyhow::{anyhow, Context as _};
 use clap::Parser;
-use std::{fs, path::PathBuf, str::FromStr};
+use std::{fs, path::PathBuf, str::FromStr, time::Duration};
 use xmpp_parsers::jid::BareJid;
+
+const DEFAULT_HTTP_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]
@@ -45,6 +47,7 @@ struct ConfigFile {
     api_version: Option<String>,
     api_key: Option<String>,
     api_token: Option<String>,
+    http_timeout: Option<u64>,
     model: String,
     system_message: Option<String>,
     reasoning_effort: Option<String>,
@@ -76,6 +79,7 @@ pub struct Config {
     pub api_options: jutella::ApiOptions,
     pub api_version: Option<String>,
     pub api_auth: jutella::Auth,
+    pub http_timeout: Duration,
     pub model: String,
     pub system_message: Option<String>,
     pub verbosity: Option<String>,
@@ -113,6 +117,7 @@ impl Config {
             api_version,
             api_key,
             api_token,
+            http_timeout,
             model,
             system_message,
             reasoning_effort,
@@ -159,6 +164,10 @@ impl Config {
             }
         };
 
+        let http_timeout = http_timeout
+            .map(Duration::from_secs)
+            .unwrap_or(DEFAULT_HTTP_TIMEOUT);
+
         Ok(Self {
             auth_jid,
             auth_password: password,
@@ -167,6 +176,7 @@ impl Config {
             api_options,
             api_version,
             api_auth,
+            http_timeout,
             model,
             system_message,
             verbosity,

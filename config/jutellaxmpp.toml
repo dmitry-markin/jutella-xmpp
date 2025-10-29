@@ -23,11 +23,14 @@ api_url = "https://api.openai.com/v1/"
 # Auth header `Authorization: Bearer {api_token}`. Used by OpenAI endpoints.
 api_token = "<API token>"
 
+# HTTP request timeout in seconds. 5 mins by default.
+#http_timeout = 300
+
 # Model to use.
 model = "gpt-4o-mini"
 
 # Optional system message to initialize the model.
-system_message = "You are a helpful assistant."
+#system_message = "You are a helpful assistant."
 
 # Optional reasoning effort. Passed as is to the API. Typical values are:
 # `minimal`, `low`, `medium`, or `high`.
