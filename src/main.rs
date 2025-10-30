@@ -99,7 +99,7 @@ async fn main() -> anyhow::Result<()> {
     let xmpp = Xmpp::new(XmppConfig {
         auth_jid,
         auth_password,
-        allowed_jids: allowed_users.into_iter().collect(),
+        allowed_jids: allowed_users,
         request_tx,
         response_rx,
     });

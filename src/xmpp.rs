@@ -35,6 +35,7 @@ use tokio::{
 };
 use tokio_stream::StreamMap;
 use tokio_xmpp::{starttls::ServerConfig, AsyncClient as XmppClient, Event};
+use wildmatch::WildMatch;
 use xmpp_parsers::{
     jid::BareJid,
     message::{Message as XmppMessage, MessageType},
@@ -65,7 +66,7 @@ pub const RESPONSES_CHANNEL_SIZE: usize = 1024;
 pub struct Config {
     pub auth_jid: BareJid,
     pub auth_password: String,
-    pub allowed_jids: HashSet<String>,
+    pub allowed_jids: Vec<String>,
     pub request_tx: Sender<RequestMessage>,
     pub response_rx: Receiver<ResponseMessage>,
 }
@@ -75,7 +76,8 @@ pub struct Xmpp {
     auth_jid: BareJid,
     auth_password: String,
     client: XmppClient<ServerConfig>,
-    allowed_jids: HashSet<String>,
+    allowed_jids: Vec<WildMatch>,
+    active_jids: HashSet<String>,
     request_tx: Sender<RequestMessage>,
     response_rx: Receiver<ResponseMessage>,
     pending_composing: StreamMap<BareJid, BoxStream<'static, ()>>,
@@ -99,7 +101,11 @@ impl Xmpp {
             auth_jid,
             auth_password,
             client,
-            allowed_jids,
+            allowed_jids: allowed_jids
+                .into_iter()
+                .map(|p| WildMatch::new(&p))
+                .collect(),
+            active_jids: HashSet::new(),
             request_tx,
             response_rx,
             pending_composing: StreamMap::new(),
@@ -175,10 +181,16 @@ impl Xmpp {
         let bare_jid = jid.to_bare();
         let jid = bare_jid.as_str().to_owned();
 
-        if !self.allowed_jids.contains(&jid) {
-            tracing::trace!(target: LOG_TARGET, jid, ?message, "message from unknown user");
-            return Ok(());
-        };
+        if !self.active_jids.contains(&jid) {
+            if self.allowed_jids.iter().any(|p| p.matches(&jid)) {
+                self.approve_presence_subscription(bare_jid.clone()).await;
+                self.send_chat_state_active(bare_jid.clone()).await;
+                self.active_jids.insert(jid.clone());
+            } else {
+                tracing::trace!(target: LOG_TARGET, jid, ?message, "message from unknown user");
+                return Ok(());
+            }
+        }
 
         if message.type_ != MessageType::Chat {
             tracing::warn!(
@@ -315,39 +327,15 @@ impl Xmpp {
         self.send_chat_state_notification(bare_jid, "active").await;
     }
 
-    async fn pre_approve_presence_subscriptions(&mut self) {
-        for jid in &self.allowed_jids {
-            if let Ok(bare_jid) = BareJid::new(jid) {
-                tracing::trace!(target: LOG_TARGET, jid, "pre-approving presence subscription");
-
-                let presence = Presence::subscribed().with_to(bare_jid);
-                self.client
-                    .send_stanza(presence.into())
-                    .await
-                    .inspect_err(|error| {
-                        tracing::error!(
-                            target: LOG_TARGET,
-                            jid,
-                            ?error,
-                            "error sending presence subscription pre-approval",
-                        )
-                    })
-                    .unwrap_or_default();
-            } else {
-                tracing::error!(target: LOG_TARGET, jid, "cannot construct `BareJid`");
-            }
-        }
-    }
-
-    async fn send_initial_chat_state_active(&mut self) {
-        for jid in self.allowed_jids.clone() {
-            if let Ok(bare_jid) = BareJid::new(&jid) {
-                tracing::trace!(target: LOG_TARGET, jid, "sending initial chat state `active`");
-
-                self.send_chat_state_active(bare_jid).await;
-            } else {
-                tracing::error!(target: LOG_TARGET, jid, "cannot construct `BareJid`");
-            }
+    async fn approve_presence_subscription(&mut self, bare_jid: BareJid) {
+        let presence = Presence::subscribed().with_to(bare_jid.clone());
+        if let Err(error) = self.client.send_stanza(presence.into()).await {
+            tracing::error!(
+                target: LOG_TARGET,
+                jid = bare_jid.to_string(),
+                ?error,
+                "error sending presence subscription pre-approval",
+            )
         }
     }
 
@@ -356,10 +344,7 @@ impl Xmpp {
             Event::Online { .. } => {
                 tracing::info!(target: LOG_TARGET, "connected to XMPP server");
                 self.online = true;
-                self.pre_approve_presence_subscriptions().await;
                 self.send_presence().await;
-                // This will clear "composing" notification from the last run if we previously crashed.
-                self.send_initial_chat_state_active().await;
             }
             Event::Disconnected(error) => {
                 // Make sure to not spam with error during every reconnection attemp.
