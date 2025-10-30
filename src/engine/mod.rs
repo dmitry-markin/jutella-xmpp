@@ -28,13 +28,12 @@ use crate::{
     engine::handler::{ChatbotHandler, ChatbotHandlerConfig},
     message::{RequestMessage, ResponseMessage},
 };
-use anyhow::Context as _;
 use futures::{
     future::{BoxFuture, FutureExt},
     stream::{FuturesUnordered, StreamExt},
 };
 use std::{collections::HashMap, sync::Arc, time::Duration};
-use tokio::sync::mpsc::{channel, Sender};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 // Log target for this file.
 const LOG_TARGET: &str = "jutella::engine";
@@ -43,7 +42,7 @@ const LOG_TARGET: &str = "jutella::engine";
 pub const REQUESTS_CHANNEL_SIZE: usize = 100;
 
 /// Configuration for [`Jutella`].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Config {
     pub api_url: String,
     pub api_options: jutella::ApiOptions,
@@ -55,82 +54,154 @@ pub struct Config {
     pub verbosity: Option<String>,
     pub min_history_tokens: Option<usize>,
     pub max_history_tokens: usize,
-    pub allowed_users: Vec<String>,
-    pub response_tx: Sender<ResponseMessage>,
 }
 
 pub struct ChatbotEngine {
+    config: Config,
+    reqwest_client: reqwest::Client,
+    tokenizer: Arc<tiktoken_rs::CoreBPE>,
+    request_rx: Receiver<RequestMessage>,
+    response_tx: Sender<ResponseMessage>,
     handlers_futures: FuturesUnordered<BoxFuture<'static, anyhow::Result<()>>>,
+    request_txs: HashMap<String, Sender<RequestMessage>>,
 }
 
 impl ChatbotEngine {
-    pub fn new(config: Config) -> anyhow::Result<(Self, HashMap<String, Sender<RequestMessage>>)> {
-        let Config {
-            api_url,
-            api_options,
-            api_version,
-            api_auth,
-            http_timeout,
-            model,
-            system_message,
-            verbosity,
-            min_history_tokens,
-            max_history_tokens,
-            allowed_users,
-            response_tx,
-        } = config;
-
+    pub fn new(
+        config: Config,
+        request_rx: Receiver<RequestMessage>,
+        response_tx: Sender<ResponseMessage>,
+    ) -> anyhow::Result<Self> {
         let reqwest_client = reqwest::Client::new();
         let tokenizer = Arc::new(tiktoken_rs::o200k_base()?);
 
-        let handlers = allowed_users.into_iter().map(|jid| {
-            // Channel `engine` -> `handler`
-            let (request_tx, request_rx) = channel(REQUESTS_CHANNEL_SIZE);
+        Ok(Self {
+            config,
+            reqwest_client,
+            tokenizer,
+            request_rx,
+            response_tx,
+            handlers_futures: FuturesUnordered::new(),
+            request_txs: HashMap::new(),
+        })
+    }
 
-            let handler_config = ChatbotHandlerConfig {
-                jid: jid.clone(),
-                api_url: api_url.clone(),
-                api_options: api_options.clone(),
-                api_version: api_version.clone(),
-                auth: api_auth.clone(),
-                http_timeout,
-                model: model.clone(),
-                system_message: system_message.clone(),
-                verbosity: verbosity.clone(),
-                min_history_tokens,
-                max_history_tokens,
-                reqwest_client: reqwest_client.clone(),
-                tokenizer: tokenizer.clone(),
-                request_rx,
-                response_tx: response_tx.clone(),
-            };
+    fn handle_request(&mut self, request: RequestMessage) {
+        let request_tx = match self.request_txs.get(&request.jid) {
+            Some(request_tx) => request_tx,
+            None => {
+                match create_handler(
+                    self.config.clone(),
+                    request.jid.clone(),
+                    self.reqwest_client.clone(),
+                    self.tokenizer.clone(),
+                    self.response_tx.clone(),
+                ) {
+                    Ok((handler, request_tx)) => {
+                        tracing::info!(
+                            target: LOG_TARGET,
+                            jid = request.jid,
+                            "initialized chat instance",
+                        );
 
-            let handler = ChatbotHandler::new(handler_config);
+                        self.handlers_futures.push(handler.run().boxed());
+                        self.request_txs.insert(request.jid.clone(), request_tx);
+                        self.request_txs
+                            .get(&request.jid)
+                            .expect("request_tx inserted above")
+                    }
+                    Err(error) => {
+                        tracing::error!(
+                            target: LOG_TARGET,
+                            jid = request.jid,
+                            ?error,
+                            "failed to create chat instance"
+                        );
 
-            ((jid, request_tx), handler.map(|h| h.run().boxed()))
-        });
+                        return;
+                    }
+                }
+            }
+        };
 
-        let (handlers_txs, futures): (Vec<_>, Vec<_>) = handlers.unzip();
+        let jid = request.jid.clone();
 
-        let handlers_tx_map = handlers_txs.into_iter().collect();
-        let handlers_futures = futures
-            .into_iter()
-            .collect::<Result<_, _>>()
-            .context("Failed to initialize `ChatClient`")?;
-
-        Ok((Self { handlers_futures }, handlers_tx_map))
+        if let Err(error) = request_tx.try_send(request) {
+            tracing::debug!(
+                target: LOG_TARGET,
+                jid,
+                ?error,
+                "failed to send request to chat instance",
+            );
+        }
     }
 
     pub async fn run(mut self) -> anyhow::Result<()> {
-        self.handlers_futures
-            .select_next_some()
-            .await
-            .inspect_err(|error| {
-                tracing::error!(
-                    target: LOG_TARGET,
-                    "terminating engine, one of the chat handlers terminated \
-                     with error: {error}",
-                );
-            })
+        loop {
+            tokio::select! {
+                Err(e) = self.handlers_futures.select_next_some(),
+                    if !self.handlers_futures.is_empty() =>
+                {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        "terminating engine, one of the chat handlers terminated \
+                        with error: {e}",
+                    );
+                    return Err(e)
+                },
+                request = self.request_rx.recv() => {
+                    if let Some(request) = request {
+                        self.handle_request(request);
+                    } else {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            "request channel terminated, terminating ChatbotEngine",
+                        );
+                        return Ok(())
+                    }
+                }
+            }
+        }
     }
+}
+
+fn create_handler(
+    Config {
+        api_url,
+        api_options,
+        api_version,
+        api_auth,
+        http_timeout,
+        model,
+        system_message,
+        verbosity,
+        min_history_tokens,
+        max_history_tokens,
+    }: Config,
+    jid: String,
+    reqwest_client: reqwest::Client,
+    tokenizer: Arc<tiktoken_rs::CoreBPE>,
+    response_tx: Sender<ResponseMessage>,
+) -> Result<(ChatbotHandler, Sender<RequestMessage>), jutella::Error> {
+    let (request_tx, request_rx) = channel(REQUESTS_CHANNEL_SIZE);
+
+    let handler = ChatbotHandler::new(ChatbotHandlerConfig {
+        jid,
+        api_url,
+        api_options,
+        api_version,
+        auth: api_auth,
+        http_timeout,
+        model,
+        system_message,
+        verbosity,
+        min_history_tokens,
+        max_history_tokens,
+        reqwest_client,
+        tokenizer,
+        request_rx,
+        response_tx,
+    })?;
+
+    Ok((handler, request_tx))
 }

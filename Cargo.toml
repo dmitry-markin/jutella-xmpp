@@ -27,3 +27,4 @@ futures = "0.3.31"
 reqwest = { version = "0.12.24", default-features = false, features = ["gzip", "json", "hickory-dns", "http2", "rustls-tls", "zstd" ] }
 tokio-stream = "0.1.17"
 tiktoken-rs = "0.7.0"
+wildmatch = "2.5.0"

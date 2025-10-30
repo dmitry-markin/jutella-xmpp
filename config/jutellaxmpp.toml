@@ -4,8 +4,8 @@ jid = "chatbot@xmpp.com"
 # XMPP account password.
 password = "<password>"
 
-# Users allowed to use the chatbot.
-allowed_users = ["alex@xmpp.com", "john@example.com"]
+# Users allowed to use the chatbot. Wildcards "*" and "?" are supported.
+allowed_users = ["*@my-xmpp.com", "john@example.com"]
 
 # API flavor. Either `openai` or `openrouter`.
 #api = "openai"
