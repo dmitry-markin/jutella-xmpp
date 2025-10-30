@@ -30,7 +30,7 @@ mod xmpp;
 use crate::{
     config::Config,
     engine::{ChatbotEngine, Config as ChatbotEngineConfig},
-    xmpp::{Config as XmppConfig, Xmpp, RESPONSES_CHANNEL_SIZE},
+    xmpp::{Config as XmppConfig, Xmpp, REQUESTS_CHANNEL_SIZE, RESPONSES_CHANNEL_SIZE},
 };
 use anyhow::{anyhow, Context as _};
 use tokio::sync::mpsc::channel;
@@ -75,28 +75,32 @@ async fn main() -> anyhow::Result<()> {
         "configuration",
     );
 
+    let (request_tx, request_rx) = channel(REQUESTS_CHANNEL_SIZE);
     let (response_tx, response_rx) = channel(RESPONSES_CHANNEL_SIZE);
 
-    let (chatbot_engine, request_txs_map) = ChatbotEngine::new(ChatbotEngineConfig {
-        api_url,
-        api_options,
-        api_version,
-        api_auth,
-        http_timeout,
-        model,
-        system_message,
-        verbosity,
-        min_history_tokens,
-        max_history_tokens,
-        allowed_users,
+    let chatbot_engine = ChatbotEngine::new(
+        ChatbotEngineConfig {
+            api_url,
+            api_options,
+            api_version,
+            api_auth,
+            http_timeout,
+            model,
+            system_message,
+            verbosity,
+            min_history_tokens,
+            max_history_tokens,
+        },
+        request_rx,
         response_tx,
-    })
+    )
     .context("Failed to initialize chatbot engine")?;
 
     let xmpp = Xmpp::new(XmppConfig {
         auth_jid,
         auth_password,
-        request_txs_map,
+        allowed_jids: allowed_users.into_iter().collect(),
+        request_tx,
         response_rx,
     });
 

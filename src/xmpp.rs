@@ -28,7 +28,7 @@ use futures::{
     stream::{BoxStream, StreamExt},
     FutureExt,
 };
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashSet, time::Duration};
 use tokio::{
     sync::mpsc::{error::TrySendError, Receiver, Sender},
     time::MissedTickBehavior,
@@ -49,20 +49,24 @@ const LOG_TARGET: &str = "jutella::xmpp";
 // and wastes up to 50% of a CPU core by reconnecting without a delay.
 const RECONNECT_DELAY: Duration = Duration::from_secs(1);
 
-// Responses channel size.
-pub const RESPONSES_CHANNEL_SIZE: usize = 1024;
-
 // Period to send presence with.
 const PRESENSE_INTERVAL: Duration = Duration::from_secs(60);
 
 // Delay before sending back a composing notification.
 const COMPOSING_DELAY: Duration = Duration::from_secs(1);
 
+// Requests channel size.
+pub const REQUESTS_CHANNEL_SIZE: usize = 1024;
+
+// Responses channel size.
+pub const RESPONSES_CHANNEL_SIZE: usize = 1024;
+
 #[derive(Debug)]
 pub struct Config {
     pub auth_jid: BareJid,
     pub auth_password: String,
-    pub request_txs_map: HashMap<String, Sender<RequestMessage>>,
+    pub allowed_jids: HashSet<String>,
+    pub request_tx: Sender<RequestMessage>,
     pub response_rx: Receiver<ResponseMessage>,
 }
 
@@ -71,7 +75,8 @@ pub struct Xmpp {
     auth_jid: BareJid,
     auth_password: String,
     client: XmppClient<ServerConfig>,
-    request_txs_map: HashMap<String, Sender<RequestMessage>>,
+    allowed_jids: HashSet<String>,
+    request_tx: Sender<RequestMessage>,
     response_rx: Receiver<ResponseMessage>,
     pending_composing: StreamMap<BareJid, BoxStream<'static, ()>>,
     online: bool,
@@ -83,7 +88,8 @@ impl Xmpp {
         let Config {
             auth_jid,
             auth_password,
-            request_txs_map,
+            allowed_jids,
+            request_tx,
             response_rx,
         } = config;
 
@@ -93,7 +99,8 @@ impl Xmpp {
             auth_jid,
             auth_password,
             client,
-            request_txs_map,
+            allowed_jids,
+            request_tx,
             response_rx,
             pending_composing: StreamMap::new(),
             online: false,
@@ -168,7 +175,7 @@ impl Xmpp {
         let bare_jid = jid.to_bare();
         let jid = bare_jid.as_str().to_owned();
 
-        if !self.request_txs_map.contains_key(&jid) {
+        if !self.allowed_jids.contains(&jid) {
             tracing::trace!(target: LOG_TARGET, jid, ?message, "message from unknown user");
             return Ok(());
         };
@@ -206,12 +213,7 @@ impl Xmpp {
 
         tracing::debug!(target: LOG_TARGET, jid, len = req.request.len(), "request");
 
-        let request_tx = self
-            .request_txs_map
-            .get(&jid)
-            .expect("was checked above to contain jid; qed");
-
-        match request_tx.try_send(req) {
+        match self.request_tx.try_send(req) {
             Ok(()) => {
                 self.schedule_pending_composing(bare_jid.clone());
 
@@ -314,9 +316,7 @@ impl Xmpp {
     }
 
     async fn pre_approve_presence_subscriptions(&mut self) {
-        let users = self.request_txs_map.keys();
-
-        for jid in users {
+        for jid in &self.allowed_jids {
             if let Ok(bare_jid) = BareJid::new(jid) {
                 tracing::trace!(target: LOG_TARGET, jid, "pre-approving presence subscription");
 
@@ -340,9 +340,7 @@ impl Xmpp {
     }
 
     async fn send_initial_chat_state_active(&mut self) {
-        let users = self.request_txs_map.keys().cloned().collect::<Vec<_>>();
-
-        for jid in users {
+        for jid in self.allowed_jids.clone() {
             if let Ok(bare_jid) = BareJid::new(&jid) {
                 tracing::trace!(target: LOG_TARGET, jid, "sending initial chat state `active`");
 
