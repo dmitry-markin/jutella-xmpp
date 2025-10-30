@@ -26,7 +26,7 @@ use crate::message::{RequestMessage, ResponseMessage};
 use anyhow::anyhow;
 use jutella::{ApiOptions, Auth, ChatClient, ChatClientConfig, Completion, TokenUsage};
 use std::{sync::Arc, time::Duration};
-use tokio::sync::mpsc::{error::TrySendError, Receiver, Sender};
+use tokio::sync::mpsc::{Receiver, Sender};
 
 // Log target for this file.
 const LOG_TARGET: &str = "jutella::handler";
@@ -57,7 +57,6 @@ pub struct ChatbotHandler {
     client: ChatClient,
     response_tx: Sender<ResponseMessage>,
     request_rx: Receiver<RequestMessage>,
-    clogged: bool,
 }
 
 impl ChatbotHandler {
@@ -102,7 +101,6 @@ impl ChatbotHandler {
             client,
             response_tx,
             request_rx,
-            clogged: false,
         })
     }
 
@@ -150,28 +148,20 @@ impl ChatbotHandler {
                 }
             });
 
-        if let Err(e) = self.response_tx.try_send(ResponseMessage {
-            jid: jid.clone(),
-            response,
-            tokens_in,
-            tokens_in_cached,
-            tokens_out,
-            tokens_reasoning,
-        }) {
-            match e {
-                TrySendError::Closed(_) => return Err(anyhow!("responses channel closed")),
-                TrySendError::Full(_) => {
-                    if !self.clogged {
-                        self.clogged = true;
-                        tracing::error!(
-                            target: LOG_TARGET,
-                            jid,
-                            size = crate::xmpp::RESPONSES_CHANNEL_SIZE,
-                            "responses channel clogged",
-                        );
-                    }
-                }
-            }
+        if self
+            .response_tx
+            .send(ResponseMessage {
+                jid: jid.clone(),
+                response,
+                tokens_in,
+                tokens_in_cached,
+                tokens_out,
+                tokens_reasoning,
+            })
+            .await
+            .is_err()
+        {
+            return Err(anyhow!("responses channel closed"));
         }
 
         Ok(())

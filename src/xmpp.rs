@@ -30,7 +30,7 @@ use futures::{
 };
 use std::{collections::HashSet, time::Duration};
 use tokio::{
-    sync::mpsc::{error::TrySendError, Receiver, Sender},
+    sync::mpsc::{Receiver, Sender},
     time::MissedTickBehavior,
 };
 use tokio_stream::StreamMap;
@@ -82,7 +82,6 @@ pub struct Xmpp {
     response_rx: Receiver<ResponseMessage>,
     pending_composing: StreamMap<BareJid, BoxStream<'static, ()>>,
     online: bool,
-    clogged_engine: bool,
 }
 
 impl Xmpp {
@@ -110,7 +109,6 @@ impl Xmpp {
             response_rx,
             pending_composing: StreamMap::new(),
             online: false,
-            clogged_engine: false,
         }
     }
 
@@ -225,7 +223,7 @@ impl Xmpp {
 
         tracing::debug!(target: LOG_TARGET, jid, len = req.request.len(), "request");
 
-        match self.request_tx.try_send(req) {
+        match self.request_tx.send(req).await {
             Ok(()) => {
                 self.schedule_pending_composing(bare_jid.clone());
 
@@ -233,22 +231,7 @@ impl Xmpp {
                     self.send_displayed_marker(bare_jid, &id).await;
                 }
             }
-            Err(e) => match e {
-                TrySendError::Full(_) => {
-                    if !self.clogged_engine {
-                        self.clogged_engine = true;
-                        tracing::error!(
-                            target: LOG_TARGET,
-                            jid,
-                            size = crate::engine::REQUESTS_CHANNEL_SIZE,
-                            "requests channel clogged",
-                        );
-                    }
-                }
-                TrySendError::Closed(_) => {
-                    return Err(anyhow!("requests channel closed, terminating"))
-                }
-            },
+            Err(_) => return Err(anyhow!("requests channel closed, terminating")),
         }
 
         Ok(())
