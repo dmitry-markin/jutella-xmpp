@@ -33,13 +33,13 @@ use futures::{
     stream::{FuturesUnordered, StreamExt},
 };
 use std::{collections::HashMap, sync::Arc, time::Duration};
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::{channel, error::TrySendError, Receiver, Sender};
 
 // Log target for this file.
 const LOG_TARGET: &str = "jutella::engine";
 
 // If we have 100 pending messages from user, something is extremely odd.
-pub const REQUESTS_CHANNEL_SIZE: usize = 100;
+pub const REQUESTS_CHANNEL_SIZE: usize = 10;
 
 /// Configuration for [`Jutella`].
 #[derive(Debug, Clone)]
@@ -126,13 +126,24 @@ impl ChatbotEngine {
 
         let jid = request.jid.clone();
 
-        if let Err(error) = request_tx.try_send(request) {
-            tracing::debug!(
-                target: LOG_TARGET,
-                jid,
-                ?error,
-                "failed to send request to chat instance",
-            );
+        match request_tx.try_send(request) {
+            Ok(()) => (),
+            Err(TrySendError::Full(_)) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    jid,
+                    size = REQUESTS_CHANNEL_SIZE,
+                    "chat instance requests channel clogged",
+                );
+            }
+            Err(TrySendError::Closed(_)) => {
+                // This should never happen.
+                tracing::error!(
+                    target: LOG_TARGET,
+                    jid,
+                    "chat instance requests channel closed. this is a bug",
+                );
+            }
         }
     }
 
