@@ -1122,13 +1122,13 @@ dependencies = [
 [[package]]
 name = "jutella"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d875620a718b9aac9bccd33e3f1d1ea2bbdff2893ff393c1408386be7f92278a"
+source = "git+https://github.com/dmitry-markin/jutella.git#7a5fc40fb34c7f8c3e7c04b06011aa8b35087634"
 dependencies = [
  "bytes",
  "eventsource-stream",
  "futures",
  "iter_accumulate",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

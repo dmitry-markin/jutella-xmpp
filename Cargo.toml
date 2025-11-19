@@ -12,7 +12,8 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.100"
-jutella = { version = "0.7.0", default-features = false }
+#jutella = { version = "0.7.0", default-features = false }
+jutella = { git = "https://github.com/dmitry-markin/jutella.git", default-features = false }
 clap = { version = "4.5.51", features = ["derive", "wrap_help"] }
 serde = { version = "1.0.228", features = ["derive"] }
 tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread"] }

@@ -52,6 +52,7 @@ pub struct Config {
     pub model: String,
     pub system_message: Option<String>,
     pub verbosity: Option<String>,
+    pub sanitize_links: bool,
     pub min_history_tokens: Option<usize>,
     pub max_history_tokens: usize,
 }
@@ -186,6 +187,7 @@ fn create_handler(
         model,
         system_message,
         verbosity,
+        sanitize_links,
         min_history_tokens,
         max_history_tokens,
     }: Config,
@@ -206,6 +208,7 @@ fn create_handler(
         model,
         system_message,
         verbosity,
+        sanitize_links,
         min_history_tokens,
         max_history_tokens,
         reqwest_client,
