@@ -32,6 +32,11 @@ model = "gpt-4o-mini"
 # Optional system message to initialize the model.
 #system_message = "You are a helpful assistant."
 
+# Optional system message token count for context size calculation. If provided, a tokenizer
+# won't be used to count tokens in the system message, saving about 50 MB of RAM on stratup.
+# Note that for regular user/model messages the token count returned by API is used in any case.
+#system_message_tokens = 10
+
 # Optional reasoning effort. Passed as is to the API. Typical values are:
 # `minimal`, `low`, `medium`, or `high`.
 #reasoning_effort = "medium"
