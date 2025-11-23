@@ -1122,7 +1122,7 @@ dependencies = [
 [[package]]
 name = "jutella"
 version = "0.7.0"
-source = "git+https://github.com/dmitry-markin/jutella.git#599da0fbab92cf010ec468b431eb8da7ad47497f"
+source = "git+https://github.com/dmitry-markin/jutella.git#83f5a657d5ae795e16ba1f6738b9b261e7af6b47"
 dependencies = [
  "bytes",
  "eventsource-stream",
@@ -1143,6 +1143,7 @@ name = "jutella-xmpp"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "base64",
  "clap",
  "futures",
  "jutella",

@@ -63,3 +63,7 @@ min_history_tokens = 1000
 
 # Maximum number of tokens to keep in every conversation.
 max_history_tokens = 2500
+
+# Enable OpenRouter PDF engine. Typically one of `native`, `mistral-ocr`, `pdf-text`.
+# Will be ignored with `openai` API.
+#openrouter_pdf_engine = "native"

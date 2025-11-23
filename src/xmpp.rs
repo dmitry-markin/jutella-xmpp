@@ -22,8 +22,9 @@
 
 //! XMPP agent.
 
-use crate::message::{RequestMessage, ResponseMessage};
+use crate::message::{Content, RequestMessage, ResponseMessage};
 use anyhow::anyhow;
+use base64::prelude::{Engine, BASE64_STANDARD};
 use futures::{
     stream::{BoxStream, StreamExt},
     FutureExt,
@@ -82,6 +83,7 @@ pub struct Xmpp {
     response_rx: Receiver<ResponseMessage>,
     pending_composing: StreamMap<BareJid, BoxStream<'static, ()>>,
     online: bool,
+    http_client: reqwest::Client,
 }
 
 impl Xmpp {
@@ -109,6 +111,7 @@ impl Xmpp {
             response_rx,
             pending_composing: StreamMap::new(),
             online: false,
+            http_client: reqwest::Client::new(),
         }
     }
 
@@ -185,24 +188,23 @@ impl Xmpp {
                 self.send_chat_state_active(bare_jid.clone()).await;
                 self.active_jids.insert(jid.clone());
             } else {
-                tracing::trace!(target: LOG_TARGET, jid, ?message, "message from unknown user");
+                tracing::trace!(target: LOG_TARGET, jid, "message from unknown user");
                 return Ok(());
             }
         }
 
         if message.type_ != MessageType::Chat {
-            tracing::warn!(
+            tracing::debug!(
                 target: LOG_TARGET,
                 jid,
                 type_ = ?message.type_,
-                ?message,
                 "not a chat message received",
             );
             return Ok(());
         }
 
         let Some(body) = message.bodies.get("") else {
-            tracing::trace!(target: LOG_TARGET, jid, ?message, "chat message without a body");
+            tracing::trace!(target: LOG_TARGET, jid, "chat message without a body");
             return Ok(());
         };
 
@@ -216,18 +218,91 @@ impl Xmpp {
             return Ok(());
         }
 
-        let req = RequestMessage {
-            jid: jid.clone(),
-            request: body.0.clone(),
-        };
+        match message
+            .payloads
+            .into_iter()
+            .find(|p| p.name() == "x" && p.ns() == "jabber:x:oob")
+        {
+            Some(oob) => {
+                self.process_attachment_message(bare_jid, oob, message.id)
+                    .await
+            }
+            None => {
+                self.process_text_message(bare_jid, body.0.clone(), message.id)
+                    .await
+            }
+        }
+    }
 
-        tracing::debug!(target: LOG_TARGET, jid, len = req.request.len(), "request");
+    async fn process_text_message(
+        &mut self,
+        bare_jid: BareJid,
+        request: String,
+        message_id: Option<String>,
+    ) -> anyhow::Result<()> {
+        let jid = bare_jid.as_str().to_owned();
+
+        tracing::debug!(target: LOG_TARGET, jid, len = request.len(), "request");
+
+        let req = RequestMessage {
+            jid,
+            request: Content::Text(request),
+        };
 
         match self.request_tx.send(req).await {
             Ok(()) => {
                 self.schedule_pending_composing(bare_jid.clone());
 
-                if let Some(id) = message.id {
+                if let Some(id) = message_id {
+                    self.send_displayed_marker(bare_jid, &id).await;
+                }
+            }
+            Err(_) => return Err(anyhow!("requests channel closed, terminating")),
+        }
+
+        Ok(())
+    }
+
+    async fn process_attachment_message(
+        &mut self,
+        bare_jid: BareJid,
+        oob: Element,
+        message_id: Option<String>,
+    ) -> anyhow::Result<()> {
+        let jid = bare_jid.as_str().to_owned();
+
+        let Some(url) = oob.get_child("url", "jabber:x:oob").map(|e| e.text()) else {
+            tracing::debug!(target: LOG_TARGET, jid, "attachment message without url");
+            self.send_xmpp_message(bare_jid, "[ERROR] Attachment without URL".to_string())
+                .await;
+
+            return Ok(());
+        };
+
+        let (content, size) = match download_attachment(self.http_client.clone(), url).await {
+            Ok(attachment) => attachment,
+            Err(error) => {
+                tracing::debug!(target: LOG_TARGET, jid, ?error, "failed to download attachment");
+                self.send_xmpp_message(
+                    bare_jid,
+                    "[ERROR] Failed to download attachment".to_string(),
+                )
+                .await;
+
+                return Ok(());
+            }
+        };
+
+        tracing::debug!(target: LOG_TARGET, jid, size, "attachment");
+
+        let req = RequestMessage {
+            jid,
+            request: content,
+        };
+
+        match self.request_tx.send(req).await {
+            Ok(()) => {
+                if let Some(id) = message_id {
                     self.send_displayed_marker(bare_jid, &id).await;
                 }
             }
@@ -401,5 +476,48 @@ impl Xmpp {
                 }
             }
         }
+    }
+}
+
+async fn download_attachment(
+    client: reqwest::Client,
+    url: String,
+) -> anyhow::Result<(Content, usize)> {
+    let filename = match url.split('/').next_back() {
+        Some(filename) => filename.to_owned(),
+        None => return Err(anyhow!("empty URL")),
+    };
+
+    let response = client.get(url).send().await?;
+    let Some(mime_type) = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|h| h.to_str().ok())
+    else {
+        return Err(anyhow!("unknown MIME-type"));
+    };
+
+    let is_pdf = match mime_type {
+        "application/pdf" => true,
+        "image/jpeg" | "image/png" | "image/gif" | "image/webp" => false,
+        mime_type => return Err(anyhow!("unsupported MIME-type {mime_type}")),
+    };
+
+    let mime_type = mime_type.to_owned();
+    let bytes = response.bytes().await?;
+    let size = bytes.len();
+    let base64_string = BASE64_STANDARD.encode(bytes);
+    let encoded_data = format!("data:{mime_type};base64,{base64_string}");
+
+    if is_pdf {
+        Ok((
+            Content::Pdf {
+                filename: filename.to_owned(),
+                data: encoded_data,
+            },
+            size,
+        ))
+    } else {
+        Ok((Content::Image(encoded_data), size))
     }
 }
