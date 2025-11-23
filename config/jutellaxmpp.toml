@@ -44,6 +44,9 @@ model = "gpt-4o-mini"
 # `low`, `medium`, or `high`.
 #verbosity = "medium"
 
+# Sanitize links. Currently strips `utm_source=openai` GET parameter from links in the response.
+#sanitize_links = false
+
 # Optional minimum conversation history to keep in the context.
 #
 # The context will be truncated to keep at least `min_history_tokens`, but

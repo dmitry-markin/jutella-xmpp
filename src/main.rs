@@ -61,6 +61,7 @@ async fn main() -> anyhow::Result<()> {
         model,
         system_message,
         verbosity,
+        sanitize_links,
         min_history_tokens,
         max_history_tokens,
     } = Config::load().context("Failed to load config")?;
@@ -88,6 +89,7 @@ async fn main() -> anyhow::Result<()> {
             model,
             system_message,
             verbosity,
+            sanitize_links,
             min_history_tokens,
             max_history_tokens,
         },

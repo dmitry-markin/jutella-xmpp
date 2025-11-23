@@ -53,6 +53,7 @@ struct ConfigFile {
     reasoning_effort: Option<String>,
     reasoning_budget: Option<i64>,
     verbosity: Option<String>,
+    sanitize_links: Option<bool>,
     min_history_tokens: Option<usize>,
     max_history_tokens: usize,
 }
@@ -83,6 +84,7 @@ pub struct Config {
     pub model: String,
     pub system_message: Option<String>,
     pub verbosity: Option<String>,
+    pub sanitize_links: bool,
     pub min_history_tokens: Option<usize>,
     pub max_history_tokens: usize,
 }
@@ -123,6 +125,7 @@ impl Config {
             reasoning_effort,
             reasoning_budget,
             verbosity,
+            sanitize_links,
             min_history_tokens,
             max_history_tokens,
         } = ConfigFile::load(config)?;
@@ -168,6 +171,8 @@ impl Config {
             .map(Duration::from_secs)
             .unwrap_or(DEFAULT_HTTP_TIMEOUT);
 
+        let sanitize_links = sanitize_links.unwrap_or_default();
+
         Ok(Self {
             auth_jid,
             auth_password: password,
@@ -180,6 +185,7 @@ impl Config {
             model,
             system_message,
             verbosity,
+            sanitize_links,
             min_history_tokens,
             max_history_tokens,
         })
