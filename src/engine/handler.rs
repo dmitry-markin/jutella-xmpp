@@ -25,7 +25,7 @@
 use crate::message::{RequestMessage, ResponseMessage};
 use anyhow::anyhow;
 use jutella::{ApiOptions, Auth, ChatClient, ChatClientConfig, Completion, TokenUsage};
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 // Log target for this file.
@@ -42,12 +42,12 @@ pub struct ChatbotHandlerConfig {
     pub http_timeout: Duration,
     pub model: String,
     pub system_message: Option<String>,
+    pub system_message_tokens: usize,
     pub verbosity: Option<String>,
     pub sanitize_links: bool,
     pub min_history_tokens: Option<usize>,
     pub max_history_tokens: usize,
     pub reqwest_client: reqwest::Client,
-    pub tokenizer: Arc<tiktoken_rs::CoreBPE>,
     pub response_tx: Sender<ResponseMessage>,
     pub request_rx: Receiver<RequestMessage>,
 }
@@ -71,17 +71,17 @@ impl ChatbotHandler {
             http_timeout,
             model,
             system_message,
+            system_message_tokens,
             verbosity,
             sanitize_links,
             min_history_tokens,
             max_history_tokens,
             reqwest_client,
-            tokenizer,
             response_tx,
             request_rx,
         } = config;
 
-        let client = ChatClient::new_with_client_and_tokenizer(
+        let client = ChatClient::new_with_client_and_system_tokens(
             ChatClientConfig {
                 api_url,
                 api_options,
@@ -96,7 +96,7 @@ impl ChatbotHandler {
                 sanitize_links,
             },
             reqwest_client,
-            tokenizer,
+            system_message_tokens,
         )?;
 
         Ok(Self {

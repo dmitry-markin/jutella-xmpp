@@ -60,6 +60,7 @@ async fn main() -> anyhow::Result<()> {
         http_timeout,
         model,
         system_message,
+        system_message_tokens,
         verbosity,
         sanitize_links,
         min_history_tokens,
@@ -79,6 +80,30 @@ async fn main() -> anyhow::Result<()> {
     let (request_tx, request_rx) = channel(REQUESTS_CHANNEL_SIZE);
     let (response_tx, response_rx) = channel(RESPONSES_CHANNEL_SIZE);
 
+    let system_message_tokens = match (&system_message, system_message_tokens) {
+        (Some(_), Some(system_message_tokens)) => {
+            tracing::info!(
+                target: LOG_TARGET,
+                system_message_tokens,
+                "using system message tokens from config",
+            );
+
+            system_message_tokens
+        }
+        (Some(ref system_message), None) => {
+            let tokenizer = tiktoken_rs::o200k_base().context("Failed to initialize tokenizer")?;
+            let system_message_tokens = tokenizer.encode_with_special_tokens(system_message).len();
+            tracing::info!(
+                target: LOG_TARGET,
+                system_message_tokens,
+                "counted system message tokens using tokenizer",
+            );
+
+            system_message_tokens
+        }
+        _ => 0usize,
+    };
+
     let chatbot_engine = ChatbotEngine::new(
         ChatbotEngineConfig {
             api_url,
@@ -88,6 +113,7 @@ async fn main() -> anyhow::Result<()> {
             http_timeout,
             model,
             system_message,
+            system_message_tokens,
             verbosity,
             sanitize_links,
             min_history_tokens,

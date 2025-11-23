@@ -32,7 +32,7 @@ use futures::{
     future::{BoxFuture, FutureExt},
     stream::{FuturesUnordered, StreamExt},
 };
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, time::Duration};
 use tokio::sync::mpsc::{channel, error::TrySendError, Receiver, Sender};
 
 // Log target for this file.
@@ -51,6 +51,7 @@ pub struct Config {
     pub http_timeout: Duration,
     pub model: String,
     pub system_message: Option<String>,
+    pub system_message_tokens: usize,
     pub verbosity: Option<String>,
     pub sanitize_links: bool,
     pub min_history_tokens: Option<usize>,
@@ -60,7 +61,6 @@ pub struct Config {
 pub struct ChatbotEngine {
     config: Config,
     reqwest_client: reqwest::Client,
-    tokenizer: Arc<tiktoken_rs::CoreBPE>,
     request_rx: Receiver<RequestMessage>,
     response_tx: Sender<ResponseMessage>,
     handlers_futures: FuturesUnordered<BoxFuture<'static, anyhow::Result<()>>>,
@@ -74,12 +74,10 @@ impl ChatbotEngine {
         response_tx: Sender<ResponseMessage>,
     ) -> anyhow::Result<Self> {
         let reqwest_client = reqwest::Client::new();
-        let tokenizer = Arc::new(tiktoken_rs::o200k_base()?);
 
         Ok(Self {
             config,
             reqwest_client,
-            tokenizer,
             request_rx,
             response_tx,
             handlers_futures: FuturesUnordered::new(),
@@ -95,7 +93,6 @@ impl ChatbotEngine {
                     self.config.clone(),
                     request.jid.clone(),
                     self.reqwest_client.clone(),
-                    self.tokenizer.clone(),
                     self.response_tx.clone(),
                 ) {
                     Ok((handler, request_tx)) => {
@@ -186,6 +183,7 @@ fn create_handler(
         http_timeout,
         model,
         system_message,
+        system_message_tokens,
         verbosity,
         sanitize_links,
         min_history_tokens,
@@ -193,7 +191,6 @@ fn create_handler(
     }: Config,
     jid: String,
     reqwest_client: reqwest::Client,
-    tokenizer: Arc<tiktoken_rs::CoreBPE>,
     response_tx: Sender<ResponseMessage>,
 ) -> Result<(ChatbotHandler, Sender<RequestMessage>), jutella::Error> {
     let (request_tx, request_rx) = channel(REQUESTS_CHANNEL_SIZE);
@@ -207,12 +204,12 @@ fn create_handler(
         http_timeout,
         model,
         system_message,
+        system_message_tokens,
         verbosity,
         sanitize_links,
         min_history_tokens,
         max_history_tokens,
         reqwest_client,
-        tokenizer,
         request_rx,
         response_tx,
     })?;
