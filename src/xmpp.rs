@@ -290,11 +290,15 @@ impl Xmpp {
             Ok(attachment) => attachment,
             Err(error) => {
                 tracing::debug!(target: LOG_TARGET, jid, ?error, "failed to download attachment");
-                self.send_xmpp_message(
-                    bare_jid,
-                    "[ERROR] Failed to download attachment".to_string(),
-                )
-                .await;
+
+                let error_message = if error.is_invalid_type() {
+                    "[ERROR] Only PDF, JPEG, PNG, WEBP & non-animated GIF files are supported"
+                } else {
+                    "[ERROR] Failed to download attachment"
+                };
+
+                self.send_xmpp_message(bare_jid, error_message.to_string())
+                    .await;
 
                 return Ok(());
             }
@@ -486,13 +490,33 @@ impl Xmpp {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+enum AttachmentDownloadError {
+    #[error("request error: {0}")]
+    Request(#[from] reqwest::Error),
+    #[error("unknown MIME-type")]
+    UnknownMimeType,
+    #[error("unsupported MIME-type {0}")]
+    UnsupportedMimeType(String),
+    #[error("{0}")]
+    OtherError(&'static str),
+}
+
+impl AttachmentDownloadError {
+    fn is_invalid_type(&self) -> bool {
+        matches!(self, Self::UnknownMimeType | Self::UnsupportedMimeType(_))
+    }
+}
+
 async fn download_attachment(
     client: reqwest::Client,
     url: String,
-) -> anyhow::Result<(Content, usize)> {
+) -> Result<(Content, usize), AttachmentDownloadError> {
+    use AttachmentDownloadError::{OtherError, UnknownMimeType, UnsupportedMimeType};
+
     let filename = match url.split('/').next_back() {
         Some(filename) => filename.to_owned(),
-        None => return Err(anyhow!("empty URL")),
+        None => return Err(OtherError("empty URL")),
     };
 
     let response = client.get(url).send().await?;
@@ -501,13 +525,13 @@ async fn download_attachment(
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|h| h.to_str().ok())
     else {
-        return Err(anyhow!("unknown MIME-type"));
+        return Err(UnknownMimeType);
     };
 
     let is_pdf = match mime_type {
         "application/pdf" => true,
         "image/jpeg" | "image/png" | "image/gif" | "image/webp" => false,
-        mime_type => return Err(anyhow!("unsupported MIME-type {mime_type}")),
+        mime_type => return Err(UnsupportedMimeType(mime_type.to_string())),
     };
 
     let mime_type = mime_type.to_owned();

@@ -1150,6 +1150,7 @@ dependencies = [
  "reqwest",
  "rustls",
  "serde",
+ "thiserror 2.0.17",
  "tiktoken-rs",
  "tokio",
  "tokio-stream",
