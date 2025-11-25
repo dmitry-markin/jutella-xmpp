@@ -23,7 +23,7 @@
 //! XMPP agent.
 
 use crate::message::{Content, RequestMessage, ResponseMessage};
-use anyhow::anyhow;
+use anyhow::{anyhow, Context as _};
 use base64::prelude::{Engine, BASE64_STANDARD};
 use futures::{
     stream::{BoxStream, StreamExt},
@@ -57,6 +57,9 @@ const PRESENSE_INTERVAL: Duration = Duration::from_secs(60);
 // Delay before sending back a composing notification.
 const COMPOSING_DELAY: Duration = Duration::from_secs(1);
 
+// OOB attachment download HTTP request timeout.
+const ATTACHMENT_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(20);
+
 // Requests channel size.
 pub const REQUESTS_CHANNEL_SIZE: usize = 1024;
 
@@ -87,7 +90,7 @@ pub struct Xmpp {
 }
 
 impl Xmpp {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Config) -> Result<Self, anyhow::Error> {
         let Config {
             auth_jid,
             auth_password,
@@ -97,8 +100,12 @@ impl Xmpp {
         } = config;
 
         let client = XmppClient::new(auth_jid.clone(), auth_password.clone());
+        let http_client = reqwest::ClientBuilder::new()
+            .timeout(ATTACHMENT_DOWNLOAD_TIMEOUT)
+            .build()
+            .context("failed to initialize HTTP client")?;
 
-        Self {
+        Ok(Self {
             auth_jid,
             auth_password,
             client,
@@ -111,8 +118,8 @@ impl Xmpp {
             response_rx,
             pending_composing: StreamMap::new(),
             online: false,
-            http_client: reqwest::Client::new(),
-        }
+            http_client,
+        })
     }
 
     fn reconnect(&mut self) {

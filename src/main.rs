@@ -130,7 +130,7 @@ async fn main() -> anyhow::Result<()> {
         allowed_jids: allowed_users,
         request_tx,
         response_rx,
-    });
+    })?;
 
     tokio::select! {
         result = xmpp.run() => {
