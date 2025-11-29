@@ -57,6 +57,7 @@ struct ConfigFile {
     sanitize_links: Option<bool>,
     min_history_tokens: Option<usize>,
     max_history_tokens: usize,
+    openrouter_pdf_engine: Option<String>,
 }
 
 impl ConfigFile {
@@ -131,6 +132,7 @@ impl Config {
             sanitize_links,
             min_history_tokens,
             max_history_tokens,
+            openrouter_pdf_engine: pdf_engine,
         } = ConfigFile::load(config)?;
 
         let auth_jid = BareJid::new(&jid).context("Invalid auth JID")?;
@@ -153,14 +155,17 @@ impl Config {
             (ApiType::OpenAi, effort, None) => jutella::ApiOptions::OpenAi {
                 reasoning_effort: effort,
             },
-            (ApiType::OpenRouter, None, None) => {
-                jutella::ApiOptions::OpenRouter { reasoning: None }
-            }
+            (ApiType::OpenRouter, None, None) => jutella::ApiOptions::OpenRouter {
+                reasoning: None,
+                pdf_engine,
+            },
             (ApiType::OpenRouter, Some(effort), None) => jutella::ApiOptions::OpenRouter {
                 reasoning: Some(jutella::ReasoningSettings::Effort(effort)),
+                pdf_engine,
             },
             (ApiType::OpenRouter, None, Some(budget)) => jutella::ApiOptions::OpenRouter {
                 reasoning: Some(jutella::ReasoningSettings::Budget(budget)),
+                pdf_engine,
             },
             _ => {
                 return Err(anyhow!(

@@ -20,11 +20,27 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+/// User content.
+#[derive(Clone)]
+pub enum Content {
+    /// Text message.
+    Text(String),
+    /// Image attachment in base64 encoding.
+    Image(String),
+    /// PDF attachment.
+    Pdf {
+        /// File name passed to the model.
+        filename: String,
+        /// Base64-encoded file content.
+        data: String,
+    },
+}
+
 /// Message passed from XMPP engine to chatbot.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct RequestMessage {
     pub jid: String,
-    pub request: String,
+    pub request: Content,
 }
 
 /// Message passed from chatbot back to XMPP engine.

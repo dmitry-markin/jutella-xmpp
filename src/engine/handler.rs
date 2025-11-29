@@ -22,9 +22,12 @@
 
 //! Chatbot chat handler.
 
-use crate::message::{RequestMessage, ResponseMessage};
+use crate::message::{Content as MessageContent, RequestMessage, ResponseMessage};
 use anyhow::anyhow;
-use jutella::{ApiOptions, Auth, ChatClient, ChatClientConfig, Completion, TokenUsage};
+use jutella::{
+    ApiOptions, Auth, ChatClient, ChatClientConfig, Completion, Content, ContentPart, FilePart,
+    ImagePart, TokenUsage,
+};
 use std::time::Duration;
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -58,6 +61,7 @@ pub struct ChatbotHandler {
     client: ChatClient,
     response_tx: Sender<ResponseMessage>,
     request_rx: Receiver<RequestMessage>,
+    pending_attachments: Vec<ContentPart>,
 }
 
 impl ChatbotHandler {
@@ -104,6 +108,7 @@ impl ChatbotHandler {
             client,
             response_tx,
             request_rx,
+            pending_attachments: Vec::new(),
         })
     }
 
@@ -120,6 +125,35 @@ impl ChatbotHandler {
             debug_assert!(false);
             return Err(anyhow!("jid mismatch in request handler"));
         }
+
+        match request {
+            MessageContent::Text(request) => self.generate_completion(jid, request).await,
+            MessageContent::Image(base64_data) => {
+                self.pending_attachments.push(ContentPart::Image(ImagePart {
+                    url: base64_data,
+                    detail: None,
+                }));
+                Ok(())
+            }
+            MessageContent::Pdf { filename, data } => {
+                self.pending_attachments.push(ContentPart::File(FilePart {
+                    file_data: data,
+                    filename: Some(filename),
+                }));
+                Ok(())
+            }
+        }
+    }
+
+    async fn generate_completion(&mut self, jid: String, request: String) -> anyhow::Result<()> {
+        let request = if self.pending_attachments.is_empty() {
+            Content::Text(request)
+        } else {
+            let mut parts = std::mem::take(&mut self.pending_attachments);
+            parts.push(ContentPart::Text(request));
+
+            Content::ContentParts(parts)
+        };
 
         let Completion {
             response,
