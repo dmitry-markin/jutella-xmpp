@@ -206,7 +206,7 @@ impl Xmpp {
             return Ok(());
         }
 
-        let Some(body) = message.bodies.get("") else {
+        let Some((_lang, body)) = message.get_best_body_cloned(Vec::new()) else {
             tracing::trace!(target: LOG_TARGET, jid, "chat message without a body");
             return Ok(());
         };
@@ -230,10 +230,7 @@ impl Xmpp {
                 self.process_attachment_message(bare_jid, oob, message.id)
                     .await
             }
-            None => {
-                self.process_text_message(bare_jid, body.clone(), message.id)
-                    .await
-            }
+            None => self.process_text_message(bare_jid, body, message.id).await,
         }
     }
 
