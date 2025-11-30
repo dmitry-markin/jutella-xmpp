@@ -29,17 +29,18 @@ use futures::{
     stream::{BoxStream, StreamExt},
     FutureExt,
 };
+use rxml::xml_ncname;
 use std::{collections::HashSet, time::Duration};
 use tokio::{
     sync::mpsc::{Receiver, Sender},
     time::MissedTickBehavior,
 };
 use tokio_stream::StreamMap;
-use tokio_xmpp::{starttls::ServerConfig, AsyncClient as XmppClient, Event};
+use tokio_xmpp::{Client as XmppClient, Event};
 use wildmatch::WildMatch;
 use xmpp_parsers::{
     jid::BareJid,
-    message::{Message as XmppMessage, MessageType},
+    message::{Id as MessageId, Lang, Message as XmppMessage, MessageType},
     minidom::Element,
     presence::{Presence, Show as PresenceShow},
 };
@@ -79,7 +80,7 @@ pub struct Config {
 pub struct Xmpp {
     auth_jid: BareJid,
     auth_password: String,
-    client: XmppClient<ServerConfig>,
+    client: XmppClient,
     allowed_jids: Vec<WildMatch>,
     active_jids: HashSet<String>,
     request_tx: Sender<RequestMessage>,
@@ -128,16 +129,11 @@ impl Xmpp {
 
     async fn send_xmpp_message(&mut self, bare_jid: BareJid, message: String) {
         let jid = bare_jid.as_str().to_owned();
-        let xmpp_message =
-            XmppMessage::new(Some(bare_jid.into())).with_body(String::new(), message);
+        let xmpp_message = XmppMessage::new(Some(bare_jid.into())).with_body(Lang::new(), message);
 
-        self.client
-            .send_stanza(xmpp_message.into())
-            .await
-            .inspect_err(|error| {
-                tracing::error!(target: LOG_TARGET, jid, ?error, "failed to send xmpp message");
-            })
-            .unwrap_or_default();
+        if let Err(error) = self.client.send_stanza(xmpp_message.into()).await {
+            tracing::error!(target: LOG_TARGET, jid, ?error, "failed to send xmpp message");
+        }
     }
 
     async fn process_response(&mut self, resp: ResponseMessage) {
@@ -210,7 +206,7 @@ impl Xmpp {
             return Ok(());
         }
 
-        let Some(body) = message.bodies.get("") else {
+        let Some((_lang, body)) = message.get_best_body_cloned(Vec::new()) else {
             tracing::trace!(target: LOG_TARGET, jid, "chat message without a body");
             return Ok(());
         };
@@ -234,10 +230,7 @@ impl Xmpp {
                 self.process_attachment_message(bare_jid, oob, message.id)
                     .await
             }
-            None => {
-                self.process_text_message(bare_jid, body.0.clone(), message.id)
-                    .await
-            }
+            None => self.process_text_message(bare_jid, body, message.id).await,
         }
     }
 
@@ -245,7 +238,7 @@ impl Xmpp {
         &mut self,
         bare_jid: BareJid,
         request: String,
-        message_id: Option<String>,
+        message_id: Option<MessageId>,
     ) -> anyhow::Result<()> {
         let jid = bare_jid.as_str().to_owned();
 
@@ -261,7 +254,7 @@ impl Xmpp {
                 self.schedule_pending_composing(bare_jid.clone());
 
                 if let Some(id) = message_id {
-                    self.send_displayed_marker(bare_jid, &id).await;
+                    self.send_displayed_marker(bare_jid, id).await;
                 }
             }
             Err(_) => return Err(anyhow!("requests channel closed, terminating")),
@@ -274,7 +267,7 @@ impl Xmpp {
         &mut self,
         bare_jid: BareJid,
         oob: Element,
-        message_id: Option<String>,
+        message_id: Option<MessageId>,
     ) -> anyhow::Result<()> {
         let jid = bare_jid.as_str().to_owned();
 
@@ -314,7 +307,7 @@ impl Xmpp {
         match self.request_tx.send(req).await {
             Ok(()) => {
                 if let Some(id) = message_id {
-                    self.send_displayed_marker(bare_jid, &id).await;
+                    self.send_displayed_marker(bare_jid, id).await;
                 }
             }
             Err(_) => return Err(anyhow!("requests channel closed, terminating")),
@@ -323,37 +316,29 @@ impl Xmpp {
         Ok(())
     }
 
-    async fn send_displayed_marker(&mut self, bare_jid: BareJid, id: &str) {
+    async fn send_displayed_marker(&mut self, bare_jid: BareJid, id: MessageId) {
         tracing::trace!(target: LOG_TARGET, jid = bare_jid.as_str(), "sending displayed marker");
 
         let displayed = Element::builder("displayed", "urn:xmpp:chat-markers:0")
-            .attr("id", id)
+            .attr(xml_ncname!("id").to_owned(), id)
             .build();
         let message =
             XmppMessage::new(Some(bare_jid.clone().into())).with_payloads(vec![displayed]);
 
-        self.client
-            .send_stanza(message.into())
-            .await
-            .inspect_err(|error| {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    jid = bare_jid.as_str(),
-                    ?error,
-                    "error sending displayed marker",
-                );
-            })
-            .unwrap_or_default();
+        if let Err(error) = self.client.send_stanza(message.into()).await {
+            tracing::warn!(
+                target: LOG_TARGET,
+                jid = bare_jid.as_str(),
+                ?error,
+                "error sending displayed marker",
+            );
+        }
     }
 
     fn schedule_pending_composing(&mut self, bare_jid: BareJid) {
         self.pending_composing.insert(
             bare_jid,
-            async {
-                tokio::time::sleep(COMPOSING_DELAY).await;
-            }
-            .into_stream()
-            .boxed(),
+            tokio::time::sleep(COMPOSING_DELAY).into_stream().boxed(),
         );
     }
 
@@ -369,18 +354,14 @@ impl Xmpp {
         let message = XmppMessage::new(Some(bare_jid.clone().into()))
             .with_payloads(vec![composing, no_store]);
 
-        self.client
-            .send_stanza(message.into())
-            .await
-            .inspect_err(|error| {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    jid = bare_jid.as_str(),
-                    ?error,
-                    "error sending chat state notification",
-                );
-            })
-            .unwrap_or_default();
+        if let Err(error) = self.client.send_stanza(message.into()).await {
+            tracing::warn!(
+                target: LOG_TARGET,
+                jid = bare_jid.as_str(),
+                ?error,
+                "error sending chat state notification",
+            );
+        }
     }
 
     async fn send_chat_state_composing(&mut self, bare_jid: BareJid) {

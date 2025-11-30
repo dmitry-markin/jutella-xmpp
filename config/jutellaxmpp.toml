@@ -33,7 +33,7 @@ model = "gpt-4o-mini"
 #system_message = "You are a helpful assistant."
 
 # Optional system message token count for context size calculation. If provided, a tokenizer
-# won't be used to count tokens in the system message, saving about 50 MB of RAM on stratup.
+# won't be used to count tokens in the system message, saving about 50 MB of RAM on startup.
 # Note that for regular user/model messages the token count returned by API is used in any case.
 #system_message_tokens = 10
 
