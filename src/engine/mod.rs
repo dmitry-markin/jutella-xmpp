@@ -1,4 +1,4 @@
-// Copyright (c) 2024 Dmitry Markin
+// Copyright (c) 2025 Dmitry Markin
 //
 // SPDX-License-Identifier: MIT
 //
