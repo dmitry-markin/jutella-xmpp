@@ -24,16 +24,14 @@
 
 mod config;
 mod engine;
-mod message;
 mod xmpp;
 
 use crate::{
     config::Config,
-    engine::{ChatbotEngine, Config as ChatbotEngineConfig},
-    xmpp::{Config as XmppConfig, Xmpp, REQUESTS_CHANNEL_SIZE, RESPONSES_CHANNEL_SIZE},
+    engine::{ChatEngine, Config as ChatEngineConfig},
+    xmpp::{Config as XmppConfig, Xmpp},
 };
 use anyhow::{anyhow, Context as _};
-use tokio::sync::mpsc::channel;
 use tracing_log::LogTracer;
 use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 
@@ -77,9 +75,6 @@ async fn main() -> anyhow::Result<()> {
         "configuration",
     );
 
-    let (request_tx, request_rx) = channel(REQUESTS_CHANNEL_SIZE);
-    let (response_tx, response_rx) = channel(RESPONSES_CHANNEL_SIZE);
-
     let system_message_tokens = match (&system_message, system_message_tokens) {
         (Some(_), Some(system_message_tokens)) => {
             tracing::info!(
@@ -104,8 +99,14 @@ async fn main() -> anyhow::Result<()> {
         _ => 0usize,
     };
 
-    let chatbot_engine = ChatbotEngine::new(
-        ChatbotEngineConfig {
+    let (xmpp, new_chats_rx) = Xmpp::new(XmppConfig {
+        auth_jid,
+        auth_password,
+        allowed_jids: allowed_users,
+    })?;
+
+    let chat_engine = ChatEngine::new(
+        ChatEngineConfig {
             api_url,
             api_options,
             api_version,
@@ -119,24 +120,15 @@ async fn main() -> anyhow::Result<()> {
             min_history_tokens,
             max_history_tokens,
         },
-        request_rx,
-        response_tx,
+        new_chats_rx,
     )
     .context("Failed to initialize chatbot engine")?;
-
-    let xmpp = Xmpp::new(XmppConfig {
-        auth_jid,
-        auth_password,
-        allowed_jids: allowed_users,
-        request_tx,
-        response_rx,
-    })?;
 
     tokio::select! {
         result = xmpp.run() => {
             return result.context("XMPP agent terminated")
         }
-        result = chatbot_engine.run() => {
+        result = chat_engine.run() => {
             return result.context("chatbot engine terminated")
         }
     }

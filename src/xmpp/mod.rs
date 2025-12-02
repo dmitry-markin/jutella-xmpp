@@ -1,4 +1,4 @@
-// Copyright (c) 2024 Dmitry Markin
+// Copyright (c) 2025 Dmitry Markin
 //
 // SPDX-License-Identifier: MIT
 //
@@ -22,17 +22,16 @@
 
 //! XMPP agent.
 
-use crate::message::{Content, RequestMessage, ResponseMessage};
+use crate::xmpp::handle::XmppCommand;
 use anyhow::{anyhow, Context as _};
-use base64::prelude::{Engine, BASE64_STANDARD};
 use futures::{
     stream::{BoxStream, StreamExt},
     FutureExt,
 };
 use rxml::xml_ncname;
-use std::{collections::HashSet, time::Duration};
+use std::{collections::HashMap, time::Duration};
 use tokio::{
-    sync::mpsc::{Receiver, Sender},
+    sync::mpsc::{channel, Receiver, Sender},
     time::MissedTickBehavior,
 };
 use tokio_stream::StreamMap;
@@ -44,6 +43,10 @@ use xmpp_parsers::{
     minidom::Element,
     presence::{Presence, Show as PresenceShow},
 };
+
+pub use handle::{Attachment, XmppEvent, XmppHandle};
+
+mod handle;
 
 // Log target for this file.
 const LOG_TARGET: &str = "jutella::xmpp";
@@ -61,19 +64,22 @@ const COMPOSING_DELAY: Duration = Duration::from_secs(1);
 // OOB attachment download HTTP request timeout.
 const ATTACHMENT_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(20);
 
-// Requests channel size.
-pub const REQUESTS_CHANNEL_SIZE: usize = 1024;
+// Size of channel to deliver new XMPP chat instances. We deliver all new chats, maintaining
+// backpressure.
+const NEW_CHATS_CHANNEL_SIZE: usize = 1024;
 
-// Responses channel size.
-pub const RESPONSES_CHANNEL_SIZE: usize = 1024;
+// Requests channel size. If we have more than 10 pending messages from user something is extremely
+// odd. We drop extra messages.
+const REQUESTS_CHANNEL_SIZE: usize = 10;
+
+// Responses channel size. We deliver all responses, maintaiing backpressure.
+const RESPONSES_CHANNEL_SIZE: usize = 100;
 
 #[derive(Debug)]
 pub struct Config {
     pub auth_jid: BareJid,
     pub auth_password: String,
     pub allowed_jids: Vec<String>,
-    pub request_tx: Sender<RequestMessage>,
-    pub response_rx: Receiver<ResponseMessage>,
 }
 
 /// XMPP agent
@@ -82,22 +88,21 @@ pub struct Xmpp {
     auth_password: String,
     client: XmppClient,
     allowed_jids: Vec<WildMatch>,
-    active_jids: HashSet<String>,
-    request_tx: Sender<RequestMessage>,
-    response_rx: Receiver<ResponseMessage>,
+    new_chats_tx: Sender<XmppHandle>,
+    to_handles_txs: HashMap<String, Sender<XmppEvent>>,
+    from_handles_rx: Receiver<(BareJid, XmppCommand)>,
+    from_handles_tx: Sender<(BareJid, XmppCommand)>,
     pending_composing: StreamMap<BareJid, BoxStream<'static, ()>>,
     online: bool,
     http_client: reqwest::Client,
 }
 
 impl Xmpp {
-    pub fn new(config: Config) -> Result<Self, anyhow::Error> {
+    pub fn new(config: Config) -> Result<(Self, Receiver<XmppHandle>), anyhow::Error> {
         let Config {
             auth_jid,
             auth_password,
             allowed_jids,
-            request_tx,
-            response_rx,
         } = config;
 
         let client = XmppClient::new(auth_jid.clone(), auth_password.clone());
@@ -105,22 +110,28 @@ impl Xmpp {
             .timeout(ATTACHMENT_DOWNLOAD_TIMEOUT)
             .build()
             .context("failed to initialize HTTP client")?;
+        let (new_chats_tx, new_chats_rx) = channel(NEW_CHATS_CHANNEL_SIZE);
+        let (from_handles_tx, from_handles_rx) = channel(RESPONSES_CHANNEL_SIZE);
 
-        Ok(Self {
-            auth_jid,
-            auth_password,
-            client,
-            allowed_jids: allowed_jids
-                .into_iter()
-                .map(|p| WildMatch::new(&p))
-                .collect(),
-            active_jids: HashSet::new(),
-            request_tx,
-            response_rx,
-            pending_composing: StreamMap::new(),
-            online: false,
-            http_client,
-        })
+        Ok((
+            Self {
+                auth_jid,
+                auth_password,
+                client,
+                allowed_jids: allowed_jids
+                    .into_iter()
+                    .map(|p| WildMatch::new(&p))
+                    .collect(),
+                new_chats_tx,
+                to_handles_txs: HashMap::new(),
+                from_handles_tx,
+                from_handles_rx,
+                pending_composing: StreamMap::new(),
+                online: false,
+                http_client,
+            },
+            new_chats_rx,
+        ))
     }
 
     fn reconnect(&mut self) {
@@ -129,51 +140,16 @@ impl Xmpp {
 
     async fn send_xmpp_message(&mut self, bare_jid: BareJid, message: String) {
         let jid = bare_jid.as_str().to_owned();
+
+        // If we are sending a message, we have finished composing.
+        self.pending_composing.remove(&bare_jid);
+        self.send_chat_state_active(bare_jid.clone()).await;
+
         let xmpp_message = XmppMessage::new(Some(bare_jid.into())).with_body(Lang::new(), message);
 
         if let Err(error) = self.client.send_stanza(xmpp_message.into()).await {
             tracing::error!(target: LOG_TARGET, jid, ?error, "failed to send xmpp message");
         }
-    }
-
-    async fn process_response(&mut self, resp: ResponseMessage) {
-        let ResponseMessage {
-            jid,
-            response,
-            tokens_in,
-            tokens_in_cached,
-            tokens_out,
-            tokens_reasoning,
-        } = resp;
-
-        tracing::debug!(
-            target: LOG_TARGET,
-            jid,
-            len = response.len(),
-            tokens_in,
-            tokens_cached = tokens_in_cached.and_then(|v| match v {
-                0 => None,
-                v => Some(v),
-            }),
-            tokens_out,
-            tokens_reasoning = tokens_reasoning.and_then(|v| match v {
-                0 => None,
-                v => Some(v),
-            }),
-            "response"
-        );
-
-        let Ok(bare_jid) = BareJid::new(&jid) else {
-            // This must not happen as jids were checked to compare equal to string representation
-            // of allowed users when receiving request.
-            tracing::error!(target: LOG_TARGET, jid, "failed to convert to `BareJid`; this is a bug");
-            debug_assert!(false);
-            return;
-        };
-
-        self.pending_composing.remove(&bare_jid);
-        self.send_chat_state_active(bare_jid.clone()).await;
-        self.send_xmpp_message(bare_jid, response).await;
     }
 
     async fn process_xmpp_message(&mut self, message: XmppMessage) -> anyhow::Result<()> {
@@ -185,16 +161,31 @@ impl Xmpp {
         let bare_jid = jid.to_bare();
         let jid = bare_jid.as_str().to_owned();
 
-        if !self.active_jids.contains(&jid) {
-            if self.allowed_jids.iter().any(|p| p.matches(&jid)) {
-                self.approve_presence_subscription(bare_jid.clone()).await;
-                self.send_chat_state_active(bare_jid.clone()).await;
-                self.active_jids.insert(jid.clone());
-            } else {
-                tracing::trace!(target: LOG_TARGET, jid, "message from unknown user");
-                return Ok(());
-            }
-        }
+        let event_tx = if let Some(event_tx) = self.to_handles_txs.get(&jid) {
+            event_tx
+        } else if self.allowed_jids.iter().any(|p| p.matches(&jid)) {
+            let (event_tx, event_rx) = channel(REQUESTS_CHANNEL_SIZE);
+            let handle = XmppHandle {
+                jid: bare_jid.clone(),
+                rx: event_rx,
+                tx: self.from_handles_tx.clone(),
+                client: self.http_client.clone(),
+            };
+            if self.new_chats_tx.send(handle).await.is_err() {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    "new chats channel closed, terminating XMPP",
+                );
+                return Err(anyhow!("new chats channel closed"));
+            };
+            self.approve_presence_subscription(bare_jid.clone()).await;
+            self.send_chat_state_active(bare_jid.clone()).await;
+            self.to_handles_txs.insert(jid.clone(), event_tx);
+            self.to_handles_txs.get(&jid).expect("inserted above; qed")
+        } else {
+            tracing::trace!(target: LOG_TARGET, jid, "message from unknown user");
+            return Ok(());
+        };
 
         if message.type_ != MessageType::Chat {
             tracing::debug!(
@@ -221,96 +212,38 @@ impl Xmpp {
             return Ok(());
         }
 
-        match message
+        let event = match message
             .payloads
             .into_iter()
             .find(|p| p.name() == "x" && p.ns() == "jabber:x:oob")
         {
             Some(oob) => {
-                self.process_attachment_message(bare_jid, oob, message.id)
-                    .await
-            }
-            None => self.process_text_message(bare_jid, body, message.id).await,
-        }
-    }
-
-    async fn process_text_message(
-        &mut self,
-        bare_jid: BareJid,
-        request: String,
-        message_id: Option<MessageId>,
-    ) -> anyhow::Result<()> {
-        let jid = bare_jid.as_str().to_owned();
-
-        tracing::debug!(target: LOG_TARGET, jid, len = request.len(), "request");
-
-        let req = RequestMessage {
-            jid,
-            request: Content::Text(request),
-        };
-
-        match self.request_tx.send(req).await {
-            Ok(()) => {
-                self.schedule_pending_composing(bare_jid.clone());
-
-                if let Some(id) = message_id {
-                    self.send_displayed_marker(bare_jid, id).await;
-                }
-            }
-            Err(_) => return Err(anyhow!("requests channel closed, terminating")),
-        }
-
-        Ok(())
-    }
-
-    async fn process_attachment_message(
-        &mut self,
-        bare_jid: BareJid,
-        oob: Element,
-        message_id: Option<MessageId>,
-    ) -> anyhow::Result<()> {
-        let jid = bare_jid.as_str().to_owned();
-
-        let Some(url) = oob.get_child("url", "jabber:x:oob").map(|e| e.text()) else {
-            tracing::debug!(target: LOG_TARGET, jid, "attachment message without url");
-            self.send_xmpp_message(bare_jid, "[ERROR] Attachment without URL".to_string())
-                .await;
-
-            return Ok(());
-        };
-
-        let (content, size) = match download_attachment(self.http_client.clone(), url).await {
-            Ok(attachment) => attachment,
-            Err(error) => {
-                tracing::debug!(target: LOG_TARGET, jid, ?error, "failed to download attachment");
-
-                let error_message = if error.is_invalid_type() {
-                    "[ERROR] Only PDF, JPEG, PNG, WEBP & non-animated GIF files are supported"
+                if let Some(url) = oob.get_child("url", "jabber:x:oob").map(|e| e.text()) {
+                    XmppEvent::Attachment {
+                        url,
+                        id: message.id,
+                    }
                 } else {
-                    "[ERROR] Failed to download attachment"
-                };
+                    tracing::debug!(target: LOG_TARGET, jid, "attachment message without url");
+                    self.send_xmpp_message(bare_jid, "[ERROR] Attachment without URL".to_string())
+                        .await;
 
-                self.send_xmpp_message(bare_jid, error_message.to_string())
-                    .await;
-
-                return Ok(());
-            }
-        };
-
-        tracing::debug!(target: LOG_TARGET, jid, size, "attachment");
-
-        let req = RequestMessage {
-            jid,
-            request: content,
-        };
-
-        match self.request_tx.send(req).await {
-            Ok(()) => {
-                if let Some(id) = message_id {
-                    self.send_displayed_marker(bare_jid, id).await;
+                    return Ok(());
                 }
             }
-            Err(_) => return Err(anyhow!("requests channel closed, terminating")),
+            None => XmppEvent::Message {
+                text: body,
+                id: message.id,
+            },
+        };
+
+        if event_tx.send(event).await.is_err() {
+            tracing::warn!(
+                target: LOG_TARGET,
+                jid,
+                "chat channel closed",
+            );
+            self.to_handles_txs.remove(&jid);
         }
 
         Ok(())
@@ -421,6 +354,14 @@ impl Xmpp {
         Ok(())
     }
 
+    async fn process_command(&mut self, jid: BareJid, command: XmppCommand) {
+        match command {
+            XmppCommand::Message(message) => self.send_xmpp_message(jid, message).await,
+            XmppCommand::Displayed(id) => self.send_displayed_marker(jid, id).await,
+            XmppCommand::Composing => self.schedule_pending_composing(jid),
+        }
+    }
+
     async fn send_presence(&mut self) {
         tracing::trace!(target: LOG_TARGET, "sending presence");
 
@@ -447,9 +388,9 @@ impl Xmpp {
                 // TODO: checking for `self.online` here is a band-aid to reduce the chances of
                 // losing responses. Ideally, we should queue responses and only discard them
                 // once they have been sent out without errors.
-                message = self.response_rx.recv(), if self.online => {
-                    if let Some(message) = message {
-                        self.process_response(message).await;
+                command = self.from_handles_rx.recv(), if self.online => {
+                    if let Some((jid, command)) = command {
+                        self.process_command(jid, command).await;
                     } else {
                         tracing::trace!(target: LOG_TARGET, "response channel closed, shutting down");
                         return Ok(())
@@ -468,68 +409,5 @@ impl Xmpp {
                 }
             }
         }
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-enum AttachmentDownloadError {
-    #[error("request error: {0}")]
-    Request(#[from] reqwest::Error),
-    #[error("unknown MIME-type")]
-    UnknownMimeType,
-    #[error("unsupported MIME-type {0}")]
-    UnsupportedMimeType(String),
-    #[error("{0}")]
-    OtherError(&'static str),
-}
-
-impl AttachmentDownloadError {
-    fn is_invalid_type(&self) -> bool {
-        matches!(self, Self::UnknownMimeType | Self::UnsupportedMimeType(_))
-    }
-}
-
-async fn download_attachment(
-    client: reqwest::Client,
-    url: String,
-) -> Result<(Content, usize), AttachmentDownloadError> {
-    use AttachmentDownloadError::{OtherError, UnknownMimeType, UnsupportedMimeType};
-
-    let filename = match url.split('/').next_back() {
-        Some(filename) => filename.to_owned(),
-        None => return Err(OtherError("empty URL")),
-    };
-
-    let response = client.get(url).send().await?;
-    let Some(mime_type) = response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|h| h.to_str().ok())
-    else {
-        return Err(UnknownMimeType);
-    };
-
-    let is_pdf = match mime_type {
-        "application/pdf" => true,
-        "image/jpeg" | "image/png" | "image/gif" | "image/webp" => false,
-        mime_type => return Err(UnsupportedMimeType(mime_type.to_string())),
-    };
-
-    let mime_type = mime_type.to_owned();
-    let bytes = response.bytes().await?;
-    let size = bytes.len();
-    let base64_string = BASE64_STANDARD.encode(bytes);
-    let encoded_data = format!("data:{mime_type};base64,{base64_string}");
-
-    if is_pdf {
-        Ok((
-            Content::Pdf {
-                filename: filename.to_owned(),
-                data: encoded_data,
-            },
-            size,
-        ))
-    } else {
-        Ok((Content::Image(encoded_data), size))
     }
 }
