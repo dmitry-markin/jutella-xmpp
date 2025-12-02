@@ -31,7 +31,7 @@ use futures::{
 use rxml::xml_ncname;
 use std::{collections::HashMap, time::Duration};
 use tokio::{
-    sync::mpsc::{channel, Receiver, Sender},
+    sync::mpsc::{channel, error::TrySendError, Receiver, Sender},
     time::MissedTickBehavior,
 };
 use tokio_stream::StreamMap;
@@ -237,13 +237,15 @@ impl Xmpp {
             },
         };
 
-        if event_tx.send(event).await.is_err() {
-            tracing::warn!(
-                target: LOG_TARGET,
-                jid,
-                "chat channel closed",
-            );
-            self.to_handles_txs.remove(&jid);
+        match event_tx.try_send(event) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => {
+                tracing::debug!(target: LOG_TARGET, jid, "chat channel full, discarding message")
+            }
+            Err(TrySendError::Closed(_)) => {
+                tracing::warn!(target: LOG_TARGET, jid, "chat channel closed");
+                self.to_handles_txs.remove(&jid);
+            }
         }
 
         Ok(())
