@@ -1,4 +1,4 @@
-// Copyright (c) 2024 Dmitry Markin
+// Copyright (c) 2025 Dmitry Markin
 //
 // SPDX-License-Identifier: MIT
 //
@@ -22,26 +22,23 @@
 
 //! Chatbot Engine.
 
-mod handler;
+mod chat;
 
 use crate::{
-    engine::handler::{ChatbotHandler, ChatbotHandlerConfig},
-    message::{RequestMessage, ResponseMessage},
+    engine::chat::{Chat, ChatConfig},
+    xmpp::XmppHandle,
 };
 use futures::{
     future::{BoxFuture, FutureExt},
     stream::{FuturesUnordered, StreamExt},
 };
-use std::{collections::HashMap, time::Duration};
-use tokio::sync::mpsc::{channel, error::TrySendError, Receiver, Sender};
+use std::time::Duration;
+use tokio::sync::mpsc::Receiver;
 
 // Log target for this file.
 const LOG_TARGET: &str = "jutella::engine";
 
-// If we have 100 pending messages from user, something is extremely odd.
-pub const REQUESTS_CHANNEL_SIZE: usize = 10;
-
-/// Configuration for [`Jutella`].
+/// Configuration for [`ChatEngine`].
 #[derive(Debug, Clone)]
 pub struct Config {
     pub api_url: String,
@@ -58,88 +55,44 @@ pub struct Config {
     pub max_history_tokens: usize,
 }
 
-pub struct ChatbotEngine {
+pub struct ChatEngine {
     config: Config,
     reqwest_client: reqwest::Client,
-    request_rx: Receiver<RequestMessage>,
-    response_tx: Sender<ResponseMessage>,
-    handlers_futures: FuturesUnordered<BoxFuture<'static, anyhow::Result<()>>>,
-    request_txs: HashMap<String, Sender<RequestMessage>>,
+    new_chats_rx: Receiver<XmppHandle>,
+    chat_futures: FuturesUnordered<BoxFuture<'static, anyhow::Result<()>>>,
 }
 
-impl ChatbotEngine {
-    pub fn new(
-        config: Config,
-        request_rx: Receiver<RequestMessage>,
-        response_tx: Sender<ResponseMessage>,
-    ) -> anyhow::Result<Self> {
+impl ChatEngine {
+    pub fn new(config: Config, new_chats_rx: Receiver<XmppHandle>) -> anyhow::Result<Self> {
         let reqwest_client = reqwest::Client::new();
 
         Ok(Self {
             config,
             reqwest_client,
-            request_rx,
-            response_tx,
-            handlers_futures: FuturesUnordered::new(),
-            request_txs: HashMap::new(),
+            new_chats_rx,
+            chat_futures: FuturesUnordered::new(),
         })
     }
 
-    fn handle_request(&mut self, request: RequestMessage) {
-        let request_tx = match self.request_txs.get(&request.jid) {
-            Some(request_tx) => request_tx,
-            None => {
-                match create_handler(
-                    self.config.clone(),
-                    request.jid.clone(),
-                    self.reqwest_client.clone(),
-                    self.response_tx.clone(),
-                ) {
-                    Ok((handler, request_tx)) => {
-                        tracing::info!(
-                            target: LOG_TARGET,
-                            jid = request.jid,
-                            "initialized chat instance",
-                        );
+    fn handle_new_chat(&mut self, new_chat: XmppHandle) {
+        let jid = new_chat.jid().as_str().to_owned();
 
-                        self.handlers_futures.push(handler.run().boxed());
-                        self.request_txs.insert(request.jid.clone(), request_tx);
-                        self.request_txs
-                            .get(&request.jid)
-                            .expect("request_tx inserted above")
-                    }
-                    Err(error) => {
-                        tracing::error!(
-                            target: LOG_TARGET,
-                            jid = request.jid,
-                            ?error,
-                            "failed to create chat instance"
-                        );
-
-                        return;
-                    }
-                }
-            }
-        };
-
-        let jid = request.jid.clone();
-
-        match request_tx.try_send(request) {
-            Ok(()) => (),
-            Err(TrySendError::Full(_)) => {
-                tracing::debug!(
+        match create_chat_handler(self.config.clone(), self.reqwest_client.clone(), new_chat) {
+            Ok(handler) => {
+                tracing::info!(
                     target: LOG_TARGET,
                     jid,
-                    size = REQUESTS_CHANNEL_SIZE,
-                    "chat instance requests channel clogged",
+                    "initialized chat instance",
                 );
+
+                self.chat_futures.push(handler.run().boxed());
             }
-            Err(TrySendError::Closed(_)) => {
-                // This should never happen.
+            Err(error) => {
                 tracing::error!(
                     target: LOG_TARGET,
                     jid,
-                    "chat instance requests channel closed. this is a bug",
+                    ?error,
+                    "failed to create chat instance"
                 );
             }
         }
@@ -148,8 +101,8 @@ impl ChatbotEngine {
     pub async fn run(mut self) -> anyhow::Result<()> {
         loop {
             tokio::select! {
-                Err(e) = self.handlers_futures.select_next_some(),
-                    if !self.handlers_futures.is_empty() =>
+                Err(e) = self.chat_futures.select_next_some(),
+                    if !self.chat_futures.is_empty() =>
                 {
                     tracing::error!(
                         target: LOG_TARGET,
@@ -158,9 +111,9 @@ impl ChatbotEngine {
                     );
                     return Err(e)
                 },
-                request = self.request_rx.recv() => {
-                    if let Some(request) = request {
-                        self.handle_request(request);
+                new_chat = self.new_chats_rx.recv() => {
+                    if let Some(new_chat) = new_chat {
+                        self.handle_new_chat(new_chat);
                     } else {
                         tracing::debug!(
                             target: LOG_TARGET,
@@ -174,7 +127,7 @@ impl ChatbotEngine {
     }
 }
 
-fn create_handler(
+fn create_chat_handler(
     Config {
         api_url,
         api_options,
@@ -189,14 +142,10 @@ fn create_handler(
         min_history_tokens,
         max_history_tokens,
     }: Config,
-    jid: String,
     reqwest_client: reqwest::Client,
-    response_tx: Sender<ResponseMessage>,
-) -> Result<(ChatbotHandler, Sender<RequestMessage>), jutella::Error> {
-    let (request_tx, request_rx) = channel(REQUESTS_CHANNEL_SIZE);
-
-    let handler = ChatbotHandler::new(ChatbotHandlerConfig {
-        jid,
+    xmpp_handle: XmppHandle,
+) -> Result<Chat, jutella::Error> {
+    Chat::new(ChatConfig {
         api_url,
         api_options,
         api_version,
@@ -210,9 +159,6 @@ fn create_handler(
         min_history_tokens,
         max_history_tokens,
         reqwest_client,
-        request_rx,
-        response_tx,
-    })?;
-
-    Ok((handler, request_tx))
+        xmpp_handle,
+    })
 }
