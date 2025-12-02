@@ -38,7 +38,7 @@ use tokio::sync::mpsc::Receiver;
 // Log target for this file.
 const LOG_TARGET: &str = "jutella::engine";
 
-/// Configuration for [`Jutella`].
+/// Configuration for [`ChatEngine`].
 #[derive(Debug, Clone)]
 pub struct Config {
     pub api_url: String,
