@@ -22,58 +22,79 @@
 
 //! XMPP agent.
 
-use crate::xmpp::handle::XmppCommand;
+use crate::xmpp::handle::{
+    AllocateSlotFailure, AllocateSlotRequest, AllocateSlotResponse, XmppCommand,
+};
 use anyhow::{anyhow, Context as _};
 use futures::{
-    stream::{BoxStream, StreamExt},
+    future::{BoxFuture, Fuse, FusedFuture},
+    stream::{BoxStream, FuturesUnordered, StreamExt},
     FutureExt,
 };
 use rxml::xml_ncname;
 use std::{collections::HashMap, time::Duration};
 use tokio::{
-    sync::mpsc::{channel, error::TrySendError, Receiver, Sender},
-    time::MissedTickBehavior,
+    sync::{
+        mpsc::{
+            channel,
+            error::{SendError, TrySendError},
+            Receiver, Sender,
+        },
+        oneshot,
+    },
+    time::{error::Elapsed, MissedTickBehavior},
 };
 use tokio_stream::StreamMap;
-use tokio_xmpp::{Client as XmppClient, Event};
+use tokio_xmpp::{Client as XmppClient, Event, IqFailure, IqRequest, IqResponse, IqResponseToken};
 use wildmatch::WildMatch;
 use xmpp_parsers::{
-    jid::BareJid,
+    disco::{DiscoInfoQuery, DiscoInfoResult, DiscoItemsQuery, DiscoItemsResult},
+    http_upload::{SlotRequest, SlotResult},
+    iq::{self, Iq},
+    jid::{BareJid, Jid},
     message::{Id as MessageId, Lang, Message as XmppMessage, MessageType},
     minidom::Element,
+    oob::Oob,
     presence::{Presence, Show as PresenceShow},
+    stanza_error::StanzaError,
 };
 
 pub use handle::{Attachment, XmppEvent, XmppHandle};
 
 mod handle;
 
-// Log target for this file.
+/// Log target for this file.
 const LOG_TARGET: &str = "jutella::xmpp";
 
-// Delay before reconnecting to XMPP server. Built-in `tokio_xmpp` reconnect is too agressive
-// and wastes up to 50% of a CPU core by reconnecting without a delay.
+/// Delay before reconnecting to XMPP server. Built-in `tokio_xmpp` reconnect is too agressive
+/// and wastes up to 50% of a CPU core by reconnecting without a delay.
 const RECONNECT_DELAY: Duration = Duration::from_secs(1);
 
-// Period to send presence with.
+/// Period to send presence with.
 const PRESENSE_INTERVAL: Duration = Duration::from_secs(60);
 
-// Delay before sending back a composing notification.
+/// Delay before sending back a composing notification.
 const COMPOSING_DELAY: Duration = Duration::from_secs(1);
 
-// OOB attachment download HTTP request timeout.
+/// OOB attachment download HTTP request timeout.
 const ATTACHMENT_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(20);
 
-// Size of channel to deliver new XMPP chat instances. We deliver all new chats, maintaining
-// backpressure.
+/// Size of channel to deliver new XMPP chat instances. We deliver all new chats, maintaining
+/// backpressure.
 const NEW_CHATS_CHANNEL_SIZE: usize = 1024;
 
-// Requests channel size. If we have more than 10 pending messages from user something is extremely
-// odd. We drop extra messages.
+/// Requests channel size. If we have more than 10 pending messages from user something is extremely
+/// odd. We drop extra messages.
 const REQUESTS_CHANNEL_SIZE: usize = 10;
 
-// Responses channel size. We deliver all responses, maintaiing backpressure.
+/// Responses channel size. We deliver all responses, maintaiing backpressure.
 const RESPONSES_CHANNEL_SIZE: usize = 100;
+
+/// IQ requests channel size.
+const IQ_REQUESTS_CHANNEL_SIZE: usize = 10;
+
+/// IQ result await timeout.
+const IQ_AWAIT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug)]
 pub struct Config {
@@ -95,6 +116,11 @@ pub struct Xmpp {
     pending_composing: StreamMap<BareJid, BoxStream<'static, ()>>,
     online: bool,
     http_client: reqwest::Client,
+    upload_component_discovery: Fuse<BoxFuture<'static, Option<Jid>>>,
+    upload_component: Option<Jid>,
+    iq: IqRequestor,
+    iq_requests_rx: Receiver<(Jid, IqRequest, oneshot::Sender<IqResponseToken>)>,
+    pending_tasks: FuturesUnordered<BoxFuture<'static, ()>>,
 }
 
 impl Xmpp {
@@ -112,6 +138,8 @@ impl Xmpp {
             .context("failed to initialize HTTP client")?;
         let (new_chats_tx, new_chats_rx) = channel(NEW_CHATS_CHANNEL_SIZE);
         let (from_handles_tx, from_handles_rx) = channel(RESPONSES_CHANNEL_SIZE);
+        let (tx, iq_requests_rx) = channel(IQ_REQUESTS_CHANNEL_SIZE);
+        let iq = IqRequestor { tx };
 
         Ok((
             Self {
@@ -129,6 +157,11 @@ impl Xmpp {
                 pending_composing: StreamMap::new(),
                 online: false,
                 http_client,
+                upload_component_discovery: futures::future::pending().boxed().fuse(),
+                upload_component: None,
+                iq,
+                iq_requests_rx,
+                pending_tasks: FuturesUnordered::new(),
             },
             new_chats_rx,
         ))
@@ -324,12 +357,43 @@ impl Xmpp {
         }
     }
 
+    async fn discover_upload_component(&mut self) {
+        let iq = self.iq.clone();
+        let auth_jid = self.auth_jid.clone();
+
+        let future = async move {
+            match discover_http_upload_component(iq, auth_jid).await {
+                Ok(jid) => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        component = jid.as_str(),
+                        "discovered HTTP upload component",
+                    );
+
+                    Some(jid)
+                }
+                Err(error) => {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?error,
+                        "failed to discover HTTP upload component",
+                    );
+
+                    None
+                }
+            }
+        };
+
+        self.upload_component_discovery = future.boxed().fuse();
+    }
+
     async fn process_xmpp_event(&mut self, event: Event) -> anyhow::Result<()> {
         match event {
             Event::Online { .. } => {
                 tracing::info!(target: LOG_TARGET, "connected to XMPP server");
                 self.online = true;
                 self.send_presence().await;
+                self.discover_upload_component().await;
             }
             Event::Disconnected(error) => {
                 // Make sure to not spam with error during every reconnection attemp.
@@ -356,11 +420,63 @@ impl Xmpp {
         Ok(())
     }
 
+    async fn allocate_slot(
+        &mut self,
+        AllocateSlotRequest {
+            filename,
+            size,
+            content_type,
+        }: AllocateSlotRequest,
+        tx: oneshot::Sender<Result<AllocateSlotResponse, AllocateSlotFailure>>,
+    ) {
+        let slot_request = SlotRequest {
+            filename,
+            size: size as u64,
+            content_type: Some(content_type),
+        };
+
+        let iq_token = self
+            .client
+            .send_iq(
+                None, /*HTTP upload*/
+                IqRequest::Get(slot_request.into()),
+            )
+            .await;
+
+        let future = async move {
+            iq_token.await;
+        };
+
+        self.pending_tasks.push(future.boxed());
+    }
+
+    async fn send_attachment(&mut self, jid: BareJid, url: String) {
+        tracing::trace!(target: LOG_TARGET, jid = jid.as_str(), "sending attachment");
+
+        let message = XmppMessage::new(Some(jid.clone().into()))
+            .with_body(Lang::new(), url.clone())
+            .with_payload(Oob { url, desc: None });
+
+        if let Err(error) = self.client.send_stanza(message.into()).await {
+            tracing::error!(
+                target: LOG_TARGET,
+                jid = jid.as_str(),
+                ?error,
+                "failed to send xmpp attachment message",
+            );
+        }
+    }
+
     async fn process_command(&mut self, jid: BareJid, command: XmppCommand) {
         match command {
             XmppCommand::Message(message) => self.send_xmpp_message(jid, message).await,
             XmppCommand::Displayed(id) => self.send_displayed_marker(jid, id).await,
             XmppCommand::Composing => self.schedule_pending_composing(jid),
+            XmppCommand::AllocateSlot {
+                request,
+                response_tx,
+            } => self.allocate_slot(request, response_tx).await,
+            XmppCommand::Attachment(url) => self.send_attachment(jid, url).await,
         }
     }
 
@@ -409,7 +525,121 @@ impl Xmpp {
                         self.send_chat_state_composing(bare_jid).await;
                     }
                 }
+                Some(upload_component) = &mut self.upload_component_discovery => {
+                    self.upload_component = Some(upload_component);
+                }
+                Some((jid, iq_request, tx)) = self.iq_requests_rx.recv() => {
+                    let token = self.client.send_iq(Some(jid), iq_request).await;
+                    let _ = tx.send(token);
+                }
+                _ = self.pending_tasks.next(), if !self.pending_tasks.is_empty() => {}
             }
         }
+    }
+}
+
+/// Error requesting IQ.
+#[derive(Debug, thiserror::Error)]
+enum IqRequestError {
+    #[error("iq requests channel closed")]
+    MpscSend(#[from] SendError<(Jid, IqRequest, oneshot::Sender<IqResponseToken>)>),
+    #[error("iq token oneshot channel closed")]
+    OneshotRecv(#[from] oneshot::error::RecvError),
+    #[error("timeout")]
+    Timeout(#[from] Elapsed),
+    #[error("iq sending failure")]
+    IqFailure(#[from] IqFailure),
+    #[error("iq stanza error response")]
+    StanzaError(StanzaError),
+    #[error("empty iq response")]
+    EmptyResponse,
+}
+
+impl From<StanzaError> for IqRequestError {
+    fn from(stanza_error: StanzaError) -> Self {
+        Self::StanzaError(stanza_error)
+    }
+}
+
+/// Helper object to perform XMPP IQ requests.
+#[derive(Debug, Clone)]
+struct IqRequestor {
+    tx: Sender<(Jid, IqRequest, oneshot::Sender<IqResponseToken>)>,
+}
+
+impl IqRequestor {
+    async fn request(&self, jid: Jid, iq_request: IqRequest) -> Result<Element, IqRequestError> {
+        let (result_tx, result_rx) = oneshot::channel();
+        self.tx.send((jid, iq_request, result_tx)).await?;
+        let token = result_rx.await?;
+
+        match tokio::time::timeout(IQ_AWAIT_TIMEOUT, token).await?? {
+            IqResponse::Error(stanza_error) => Err(stanza_error.into()),
+            IqResponse::Result(None) => Err(IqRequestError::EmptyResponse),
+            IqResponse::Result(Some(element)) => Ok(element),
+        }
+    }
+}
+
+async fn discover_http_upload_component(iq: IqRequestor, auth_jid: BareJid) -> anyhow::Result<Jid> {
+    let domain_jid = BareJid::from_parts(None, auth_jid.domain());
+    let disco_items = DiscoItemsQuery {
+        node: None,
+        rsm: None,
+    };
+    let disco_info = DiscoInfoQuery { node: None };
+
+    let element = iq
+        .request(domain_jid.into(), IqRequest::Get(disco_items.into()))
+        .await
+        .context("disco items request failed")?;
+    let disco = DiscoItemsResult::try_from(element)?;
+
+    let mut upload_component_jid = None;
+
+    for item in disco.items {
+        let element = match iq
+            .request(item.jid.clone(), IqRequest::Get(disco_info.clone().into()))
+            .await
+        {
+            Ok(element) => element,
+            Err(error) => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    component = item.jid.as_str(),
+                    ?error,
+                    "disco info request failed",
+                );
+                continue;
+            }
+        };
+        let disco = match DiscoInfoResult::try_from(element) {
+            Ok(disco) => disco,
+            Err(error) => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    component = item.jid.as_str(),
+                    ?error,
+                    "disco info parsing error",
+                );
+                continue;
+            }
+        };
+
+        if disco
+            .features
+            .iter()
+            .find(|f| f.var == "urn:xmpp:http:upload:0")
+            .is_some()
+        {
+            upload_component_jid = Some(item.jid);
+            break;
+        }
+    }
+
+    if let Some(jid) = upload_component_jid {
+        Ok(jid)
+    } else {
+        Err(anyhow!("component not found"))
     }
 }

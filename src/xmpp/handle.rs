@@ -27,9 +27,16 @@ use futures::{
     stream::Stream,
     task::{Context, Poll},
 };
+use reqwest::header::HeaderMap;
 use std::pin::Pin;
-use tokio::sync::mpsc::{error::SendError, Receiver, Sender};
-use tokio_xmpp::jid::BareJid;
+use tokio::{
+    sync::{
+        mpsc::{error::SendError, Receiver, Sender},
+        oneshot,
+    },
+    time::error::Elapsed,
+};
+use tokio_xmpp::{jid::BareJid, IqFailure};
 use xmpp_parsers::message::Id as MessageId;
 
 /// XMPP event.
@@ -48,6 +55,42 @@ pub enum XmppCommand {
     Displayed(MessageId),
     /// Composing notification. Automatically cleared once [`XmppCommand::Message`] is sent.
     Composing,
+    /// Allocate attachment upload slot.
+    AllocateSlot {
+        request: AllocateSlotRequest,
+        response_tx: oneshot::Sender<Result<AllocateSlotResponse, AllocateSlotFailure>>,
+    },
+    /// Send attachment with given URL.
+    Attachment(String),
+}
+
+/// HTTP upload slot allocation request.
+pub struct AllocateSlotRequest {
+    /// File name.
+    pub filename: String,
+    /// File siize in bytes.
+    pub size: usize,
+    /// HTTP Content-Type.
+    pub content_type: String,
+}
+
+/// HTTP upload slot allocation response.
+pub struct AllocateSlotResponse {
+    /// URL for uploading the attachment using PUT request.
+    pub put_url: String,
+    /// Headers to set in PUT request.
+    pub headers: HeaderMap,
+    /// URL for downloading the attachment.
+    pub get_url: String,
+}
+
+/// HTTP upload slot allocation failure.
+#[derive(Debug, thiserror::Error)]
+pub enum AllocateSlotFailure {
+    #[error("iq failure: {0}")]
+    IqFailure(#[from] IqFailure),
+    #[error("iq awaiting timeout")]
+    IqTimeout(#[from] Elapsed),
 }
 
 /// XMPP attachment.
