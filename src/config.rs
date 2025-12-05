@@ -24,6 +24,7 @@
 
 use anyhow::{anyhow, Context as _};
 use clap::Parser;
+use serde_json::value::Value;
 use std::{fs, path::PathBuf, str::FromStr, time::Duration};
 use xmpp_parsers::jid::BareJid;
 
@@ -58,6 +59,8 @@ struct ConfigFile {
     min_history_tokens: Option<usize>,
     max_history_tokens: usize,
     openrouter_pdf_engine: Option<String>,
+    image_generation: Option<bool>,
+    extra_params_json: Option<String>,
 }
 
 impl ConfigFile {
@@ -90,6 +93,7 @@ pub struct Config {
     pub sanitize_links: bool,
     pub min_history_tokens: Option<usize>,
     pub max_history_tokens: usize,
+    pub extra_params: Option<serde_json::map::Map<String, Value>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -133,6 +137,8 @@ impl Config {
             min_history_tokens,
             max_history_tokens,
             openrouter_pdf_engine: pdf_engine,
+            image_generation,
+            extra_params_json,
         } = ConfigFile::load(config)?;
 
         let auth_jid = BareJid::new(&jid).context("Invalid auth JID")?;
@@ -151,6 +157,8 @@ impl Config {
             .as_deref()
             .map_or(Ok(ApiType::OpenAi), ApiType::from_str)?;
 
+        let image_generation = image_generation.unwrap_or_default();
+
         let api_options = match (api_type, reasoning_effort, reasoning_budget) {
             (ApiType::OpenAi, effort, None) => jutella::ApiOptions::OpenAi {
                 reasoning_effort: effort,
@@ -158,14 +166,17 @@ impl Config {
             (ApiType::OpenRouter, None, None) => jutella::ApiOptions::OpenRouter {
                 reasoning: None,
                 pdf_engine,
+                image_generation,
             },
             (ApiType::OpenRouter, Some(effort), None) => jutella::ApiOptions::OpenRouter {
                 reasoning: Some(jutella::ReasoningSettings::Effort(effort)),
                 pdf_engine,
+                image_generation,
             },
             (ApiType::OpenRouter, None, Some(budget)) => jutella::ApiOptions::OpenRouter {
                 reasoning: Some(jutella::ReasoningSettings::Budget(budget)),
                 pdf_engine,
+                image_generation,
             },
             _ => {
                 return Err(anyhow!(
@@ -180,6 +191,17 @@ impl Config {
             .unwrap_or(DEFAULT_HTTP_TIMEOUT);
 
         let sanitize_links = sanitize_links.unwrap_or_default();
+
+        let extra_params = extra_params_json
+            .map(|s| serde_json::from_str(&s))
+            .transpose()
+            .context("not a valid JSON in `extra_params_json`")?
+            .map(|json: Value| {
+                json.as_object()
+                    .cloned()
+                    .context("not a JSON map in `extra_params_json`")
+            })
+            .transpose()?;
 
         Ok(Self {
             auth_jid,
@@ -197,6 +219,7 @@ impl Config {
             sanitize_links,
             min_history_tokens,
             max_history_tokens,
+            extra_params,
         })
     }
 }

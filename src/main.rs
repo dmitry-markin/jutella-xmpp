@@ -63,6 +63,7 @@ async fn main() -> anyhow::Result<()> {
         sanitize_links,
         min_history_tokens,
         max_history_tokens,
+        extra_params,
     } = Config::load().context("Failed to load config")?;
 
     tracing::info!(
@@ -119,6 +120,7 @@ async fn main() -> anyhow::Result<()> {
             sanitize_links,
             min_history_tokens,
             max_history_tokens,
+            extra_params,
         },
         new_chats_rx,
     )
