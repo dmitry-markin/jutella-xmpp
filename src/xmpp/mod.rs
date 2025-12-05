@@ -22,17 +22,16 @@
 
 //! XMPP agent.
 
-use crate::xmpp::handle::{
-    AllocateSlotFailure, AllocateSlotRequest, AllocateSlotResponse, XmppCommand,
-};
+use crate::xmpp::handle::{AllocateSlotRequest, AllocateSlotResponse, XmppCommand};
 use anyhow::{anyhow, Context as _};
 use futures::{
-    future::{BoxFuture, Fuse, FusedFuture},
+    future::{BoxFuture, Fuse},
     stream::{BoxStream, FuturesUnordered, StreamExt},
     FutureExt,
 };
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use rxml::xml_ncname;
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, str::FromStr, time::Duration};
 use tokio::{
     sync::{
         mpsc::{
@@ -50,7 +49,6 @@ use wildmatch::WildMatch;
 use xmpp_parsers::{
     disco::{DiscoInfoQuery, DiscoInfoResult, DiscoItemsQuery, DiscoItemsResult},
     http_upload::{SlotRequest, SlotResult},
-    iq::{self, Iq},
     jid::{BareJid, Jid},
     message::{Id as MessageId, Lang, Message as XmppMessage, MessageType},
     minidom::Element,
@@ -422,29 +420,15 @@ impl Xmpp {
 
     async fn allocate_slot(
         &mut self,
-        AllocateSlotRequest {
-            filename,
-            size,
-            content_type,
-        }: AllocateSlotRequest,
-        tx: oneshot::Sender<Result<AllocateSlotResponse, AllocateSlotFailure>>,
+        slot_request: AllocateSlotRequest,
+        tx: oneshot::Sender<Result<AllocateSlotResponse, anyhow::Error>>,
     ) {
-        let slot_request = SlotRequest {
-            filename,
-            size: size as u64,
-            content_type: Some(content_type),
-        };
-
-        let iq_token = self
-            .client
-            .send_iq(
-                None, /*HTTP upload*/
-                IqRequest::Get(slot_request.into()),
-            )
-            .await;
+        let iq = self.iq.clone();
+        let upload_component = self.upload_component.clone();
 
         let future = async move {
-            iq_token.await;
+            let result = allocate_upload_slot(iq, upload_component, slot_request).await;
+            let _ = tx.send(result);
         };
 
         self.pending_tasks.push(future.boxed());
@@ -629,8 +613,7 @@ async fn discover_http_upload_component(iq: IqRequestor, auth_jid: BareJid) -> a
         if disco
             .features
             .iter()
-            .find(|f| f.var == "urn:xmpp:http:upload:0")
-            .is_some()
+            .any(|f| f.var == "urn:xmpp:http:upload:0")
         {
             upload_component_jid = Some(item.jid);
             break;
@@ -642,4 +625,49 @@ async fn discover_http_upload_component(iq: IqRequestor, auth_jid: BareJid) -> a
     } else {
         Err(anyhow!("component not found"))
     }
+}
+
+async fn allocate_upload_slot(
+    iq: IqRequestor,
+    upload_component: Option<Jid>,
+    AllocateSlotRequest {
+        filename,
+        size,
+        content_type,
+    }: AllocateSlotRequest,
+) -> Result<AllocateSlotResponse, anyhow::Error> {
+    let Some(upload_component) = upload_component else {
+        return Err(anyhow!("HTTP upload component JID not known"));
+    };
+
+    let slot_request = SlotRequest {
+        filename,
+        size: size as u64,
+        content_type: Some(content_type),
+    };
+
+    let element = iq
+        .request(upload_component, IqRequest::Get(slot_request.into()))
+        .await?;
+    let slot_result = SlotResult::try_from(element)?;
+
+    let put_url = slot_result.put.url;
+    let get_url = slot_result.get.url;
+    let headers: HeaderMap = slot_result
+        .put
+        .headers
+        .into_iter()
+        .map(|h| -> Result<(HeaderName, HeaderValue), anyhow::Error> {
+            Ok((
+                HeaderName::from_str(h.name.as_str())?,
+                HeaderValue::from_str(&h.value)?,
+            ))
+        })
+        .collect::<Result<_, _>>()?;
+
+    Ok(AllocateSlotResponse {
+        put_url,
+        headers,
+        get_url,
+    })
 }

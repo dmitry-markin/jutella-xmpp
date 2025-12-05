@@ -22,6 +22,7 @@
 
 //! XMPP chat handle.
 
+use anyhow::{anyhow, Context as _};
 use base64::prelude::{Engine, BASE64_STANDARD};
 use futures::{
     stream::Stream,
@@ -29,14 +30,11 @@ use futures::{
 };
 use reqwest::header::HeaderMap;
 use std::pin::Pin;
-use tokio::{
-    sync::{
-        mpsc::{error::SendError, Receiver, Sender},
-        oneshot,
-    },
-    time::error::Elapsed,
+use tokio::sync::{
+    mpsc::{error::SendError, Receiver, Sender},
+    oneshot,
 };
-use tokio_xmpp::{jid::BareJid, IqFailure};
+use tokio_xmpp::jid::BareJid;
 use xmpp_parsers::message::Id as MessageId;
 
 /// XMPP event.
@@ -58,7 +56,7 @@ pub enum XmppCommand {
     /// Allocate attachment upload slot.
     AllocateSlot {
         request: AllocateSlotRequest,
-        response_tx: oneshot::Sender<Result<AllocateSlotResponse, AllocateSlotFailure>>,
+        response_tx: oneshot::Sender<Result<AllocateSlotResponse, anyhow::Error>>,
     },
     /// Send attachment with given URL.
     Attachment(String),
@@ -82,15 +80,6 @@ pub struct AllocateSlotResponse {
     pub headers: HeaderMap,
     /// URL for downloading the attachment.
     pub get_url: String,
-}
-
-/// HTTP upload slot allocation failure.
-#[derive(Debug, thiserror::Error)]
-pub enum AllocateSlotFailure {
-    #[error("iq failure: {0}")]
-    IqFailure(#[from] IqFailure),
-    #[error("iq awaiting timeout")]
-    IqTimeout(#[from] Elapsed),
 }
 
 /// XMPP attachment.
@@ -167,6 +156,16 @@ impl XmppHandle {
             .await
     }
 
+    /// Send attachment.
+    pub async fn send_attachment(
+        &self,
+        url: String,
+    ) -> Result<(), SendError<(BareJid, XmppCommand)>> {
+        self.tx
+            .send((self.jid.clone(), XmppCommand::Attachment(url)))
+            .await
+    }
+
     /// Download attachment from the message.
     pub async fn download_attachment(
         &self,
@@ -212,6 +211,54 @@ impl XmppHandle {
             Ok((Attachment::Image(encoded_data), size))
         }
     }
+
+    /// Upload attachment to XMPP HTTP upload component. Returns a URL for downloading.
+    pub async fn upload_attachment(&self, base64_url: String) -> Result<String, anyhow::Error> {
+        let (content_type, base64_data) =
+            extract_content_type_and_base64(&base64_url).ok_or(anyhow!("invalid base64 url"))?;
+
+        let filename = match content_type {
+            "image/jpeg" => "image.jpg",
+            "image/png" => "image.png",
+            "image/gif" => "image.gif",
+            "image/webp" => "image.webp",
+            content_type => return Err(anyhow!("unsupported content-type `{content_type}`")),
+        };
+
+        let binary = BASE64_STANDARD
+            .decode(base64_data)
+            .context("invalid base64 data")?;
+
+        let (response_tx, rx) = oneshot::channel();
+        self.tx
+            .send((
+                self.jid.clone(),
+                XmppCommand::AllocateSlot {
+                    request: AllocateSlotRequest {
+                        filename: filename.to_string(),
+                        size: binary.len(),
+                        content_type: content_type.to_string(),
+                    },
+                    response_tx,
+                },
+            ))
+            .await?;
+
+        let AllocateSlotResponse {
+            put_url,
+            headers,
+            get_url,
+        } = rx.await??;
+
+        self.client
+            .put(put_url)
+            .headers(headers)
+            .body(binary)
+            .send()
+            .await?;
+
+        Ok(get_url)
+    }
 }
 
 impl Stream for XmppHandle {
@@ -220,4 +267,13 @@ impl Stream for XmppHandle {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.as_mut().rx.poll_recv(cx)
     }
+}
+
+fn extract_content_type_and_base64(encoded_data: &str) -> Option<(&str, &str)> {
+    let tail = encoded_data.strip_prefix("data:")?;
+    let index = tail.find(';')?;
+    let (content_type, tail) = tail.split_at(index);
+    let b64_data = tail.strip_prefix(";base64,")?;
+
+    Some((content_type, b64_data))
 }
