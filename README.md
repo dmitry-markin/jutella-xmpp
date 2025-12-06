@@ -2,9 +2,16 @@
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/dmitry-markin/jutella-xmpp/blob/master/LICENSE) [![crates.io](https://img.shields.io/crates/v/jutella-xmpp.svg)](https://crates.io/crates/jutella-xmpp)
 
-XMPP – OpenAI API bridge based on [tokio-xmpp](https://docs.rs/tokio-xmpp/latest/tokio_xmpp/) and [jutella](https://github.com/dmitry-markin/jutella).
+XMPP LLM bridge based on [tokio-xmpp](https://docs.rs/tokio-xmpp/latest/tokio_xmpp/) and [jutella](https://github.com/dmitry-markin/jutella).
 
-Supports OpenAI, Azure, and OpenRouter API flavors and implements rolling context window.
+Supports OpenAI (including Azure auth flavor) and OpenRouter chat completions API.
+
+## Features
+
+1. Rolling context window with min/max token limits (see the config parameters description for details).
+2. Presence, read receipts & composing notifications.
+3. Image & PDF file attachments.
+4. Image generation (only with OpenRouter, no multi-turn editing support).
 
 ## Installation
 
