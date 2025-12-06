@@ -69,6 +69,9 @@ max_history_tokens = 2500
 #openrouter_pdf_engine = "native"
 
 # Enable image generation. Only supported with OpenRouter.
+#
+# It is recommended to set `max_history_tokens = 0` when using this, because most providers
+# do not support passing images back in assistant messages.
 #image_generation = false
 
 # Extra parameters appended as is to the response, in JSON format.
