@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2025-12-06
+
+This release brings support for PDF & image attachments. Note that attachments are only sent to the model after receiving a follow-up text instruction. This release also adds initial support for image generation via OpenRouter API.
+
+### Added
+
+- Image generation support with OpenRouter ([#19](https://github.com/dmitry-markin/jutella-xmpp/pull/19))
+- PDF & image attachments support ([#16](https://github.com/dmitry-markin/jutella-xmpp/pull/16))
+- Sanitize links ([#14](https://github.com/dmitry-markin/jutella-xmpp/pull/14))
+
+### Changed
+
+- Download attachments asynchronously ([#18](https://github.com/dmitry-markin/jutella-xmpp/pull/18))
+- Upgrade tokio-xmpp v4.0.0 -> v5.0.0 ([#17](https://github.com/dmitry-markin/jutella-xmpp/pull/17))
+- Use tokenizer on startup only or don't use at all ([#15](https://github.com/dmitry-markin/jutella-xmpp/pull/15))
+
 ## [0.2.0] - 2025-11-02
 
 This is a second release of `jutella-xmpp` and it brings multiple improvements compared to the initial release. User-facing ones include presence, read receipts, and "composing" notifications. Server can now talk to OpenRouter, supporting resoning budget/effort & verbosity settings. Allowed users can now be matched by wildcards (i.e., you can whitelist an entire XMPP domain instead of listing all the individual users). Memory footprint is reduced substantially by sharing a tokenizer across all chat instances.
