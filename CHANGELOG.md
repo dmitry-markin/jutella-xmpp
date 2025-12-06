@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 This release brings support for PDF & image attachments. Note that attachments are only sent to the model after receiving a follow-up text instruction. This release also adds initial support for image generation via OpenRouter API.
 
-Additionally, it is now possible to run `jutella-xmpp` in a memory-constrained environment by specifying the number of tokens in a system prompt in the config file, so `tiktoken-rs` tokenizer is not instantiated.
+Additionally, it is now possible to run `jutella-xmpp` in a memory-constrained environment by specifying the number of tokens in a system prompt in the config file, so `tiktoken-rs` tokenizer is not instantiated (this reduces peak RAM usage in text-only mode from 60 MB to 15 MB).
 
 ### Added
 
