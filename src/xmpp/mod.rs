@@ -355,7 +355,7 @@ impl Xmpp {
         }
     }
 
-    async fn discover_upload_component(&mut self) {
+    fn discover_upload_component(&mut self) {
         let iq = self.iq.clone();
         let auth_jid = self.auth_jid.clone();
 
@@ -391,7 +391,7 @@ impl Xmpp {
                 tracing::info!(target: LOG_TARGET, "connected to XMPP server");
                 self.online = true;
                 self.send_presence().await;
-                self.discover_upload_component().await;
+                self.discover_upload_component();
             }
             Event::Disconnected(error) => {
                 // NOTE: as of tokio-xmpp v5.0.0 this event is never emitted and reconnections are
@@ -421,7 +421,7 @@ impl Xmpp {
         Ok(())
     }
 
-    async fn allocate_slot(
+    fn allocate_slot(
         &mut self,
         slot_request: AllocateSlotRequest,
         tx: oneshot::Sender<Result<AllocateSlotResponse, anyhow::Error>>,
@@ -462,7 +462,7 @@ impl Xmpp {
             XmppCommand::AllocateSlot {
                 request,
                 response_tx,
-            } => self.allocate_slot(request, response_tx).await,
+            } => self.allocate_slot(request, response_tx),
             XmppCommand::Attachment(url) => self.send_attachment(jid, url).await,
         }
     }
