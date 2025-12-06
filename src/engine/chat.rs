@@ -109,99 +109,99 @@ impl Chat {
         })
     }
 
+    fn log_response(
+        &self,
+        len: usize,
+        image_sizes: Option<Vec<usize>>,
+        TokenUsage {
+            tokens_in,
+            tokens_in_cached,
+            tokens_out,
+            tokens_reasoning,
+        }: TokenUsage,
+    ) {
+        let tokens_cached = tokens_in_cached.and_then(|v| match v {
+            0 => None,
+            v => Some(v),
+        });
+        let tokens_reasoning = tokens_reasoning.and_then(|v| match v {
+            0 => None,
+            v => Some(v),
+        });
+
+        if let Some(image_sizes) = image_sizes {
+            tracing::debug!(
+                target: LOG_TARGET,
+                jid = self.jid,
+                len,
+                ?image_sizes,
+                tokens_in,
+                tokens_cached,
+                tokens_out,
+                tokens_reasoning,
+                "response with images",
+            );
+        } else {
+            tracing::debug!(
+                target: LOG_TARGET,
+                jid = self.jid,
+                len,
+                tokens_in,
+                tokens_cached,
+                tokens_out,
+                tokens_reasoning,
+                "response",
+            );
+        }
+    }
+
     async fn handle_completion(
         &mut self,
         Completion {
             response,
             reasoning: _,
-            token_usage:
-                TokenUsage {
-                    tokens_in,
-                    tokens_in_cached,
-                    tokens_out,
-                    tokens_reasoning,
-                },
+            token_usage,
         }: Completion,
     ) -> anyhow::Result<()> {
         match response {
             Content::Text(response) => {
-                tracing::debug!(
-                    target: LOG_TARGET,
-                    jid = self.jid,
-                    len = response.len(),
-                    tokens_in,
-                    tokens_cached = tokens_in_cached.and_then(|v| match v {
-                        0 => None,
-                        v => Some(v),
-                    }),
-                    tokens_out,
-                    tokens_reasoning = tokens_reasoning.and_then(|v| match v {
-                        0 => None,
-                        v => Some(v),
-                    }),
-                    "response",
-                );
+                self.log_response(response.len(), None, token_usage);
 
                 self.xmpp.send_message(response).await?;
             }
             Content::ContentParts(parts) => {
-                tracing::debug!(
-                    target: LOG_TARGET,
-                    jid = self.jid,
-                    tokens_in,
-                    tokens_cached = tokens_in_cached.and_then(|v| match v {
-                        0 => None,
-                        v => Some(v),
-                    }),
-                    tokens_out,
-                    tokens_reasoning = tokens_reasoning.and_then(|v| match v {
-                        0 => None,
-                        v => Some(v),
-                    }),
-                    "response with content",
-                );
+                let mut len = 0;
+                let mut image_sizes = Vec::new();
 
                 for part in parts {
                     match part {
                         ContentPart::Text(text) => {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                jid = self.jid,
-                                len = text.len(),
-                                "text content",
-                            );
+                            len += text.len();
 
                             self.xmpp.send_message(text).await?;
                         }
                         ContentPart::Image(ImagePart {
                             url: base64_url,
                             detail: _,
-                        }) => {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                jid = self.jid,
-                                encoded_len = base64_url.len(),
-                                "image content",
-                            );
+                        }) => match self.xmpp.upload_image(base64_url).await {
+                            Ok((url, size)) => {
+                                image_sizes.push(size);
 
-                            match self.xmpp.upload_attachment(base64_url).await {
-                                Ok(url) => self.xmpp.send_attachment(url).await?,
-                                Err(error) => {
-                                    tracing::error!(
-                                        target: LOG_TARGET,
-                                        jid = self.jid,
-                                        ?error,
-                                        "attachment upload failure",
-                                    );
-
-                                    self.xmpp
-                                        .send_message(
-                                            "[ERROR] Failed to upload attachment".to_string(),
-                                        )
-                                        .await?;
-                                }
+                                self.xmpp.send_attachment(url).await?;
                             }
-                        }
+                            Err(error) => {
+                                tracing::error!(
+                                    target: LOG_TARGET,
+                                    jid = self.jid,
+                                    ?error,
+                                    "attachment upload failure",
+                                );
+
+                                self.xmpp
+                                    .send_message("[ERROR] Failed to upload attachment".to_string())
+                                    .await?;
+                            }
+                        },
                         ContentPart::File(_) => {
                             tracing::error!(
                                 target: LOG_TARGET,
@@ -217,6 +217,8 @@ impl Chat {
                         }
                     }
                 }
+
+                self.log_response(len, Some(image_sizes), token_usage);
             }
         }
 

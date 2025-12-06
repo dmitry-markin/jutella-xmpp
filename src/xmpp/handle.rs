@@ -212,8 +212,9 @@ impl XmppHandle {
         }
     }
 
-    /// Upload attachment to XMPP HTTP upload component. Returns a URL for downloading.
-    pub async fn upload_attachment(&self, base64_url: String) -> Result<String, anyhow::Error> {
+    /// Upload image in base64 encoded form to XMPP HTTP upload component. Returns a URL
+    /// for downloading and decoded attachment size.
+    pub async fn upload_image(&self, base64_url: String) -> Result<(String, usize), anyhow::Error> {
         let (content_type, base64_data) =
             extract_content_type_and_base64(&base64_url).ok_or(anyhow!("invalid base64 url"))?;
 
@@ -228,6 +229,7 @@ impl XmppHandle {
         let binary = BASE64_STANDARD
             .decode(base64_data)
             .context("invalid base64 data")?;
+        let size = binary.len();
 
         let (response_tx, rx) = oneshot::channel();
         self.tx
@@ -236,7 +238,7 @@ impl XmppHandle {
                 XmppCommand::AllocateSlot {
                     request: AllocateSlotRequest {
                         filename: filename.to_string(),
-                        size: binary.len(),
+                        size,
                         content_type: content_type.to_string(),
                     },
                     response_tx,
@@ -257,7 +259,7 @@ impl XmppHandle {
             .send()
             .await?;
 
-        Ok(get_url)
+        Ok((get_url, size))
     }
 }
 
