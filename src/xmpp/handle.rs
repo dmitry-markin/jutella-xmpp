@@ -22,13 +22,18 @@
 
 //! XMPP chat handle.
 
+use anyhow::{anyhow, Context as _};
 use base64::prelude::{Engine, BASE64_STANDARD};
 use futures::{
     stream::Stream,
     task::{Context, Poll},
 };
+use reqwest::header::HeaderMap;
 use std::pin::Pin;
-use tokio::sync::mpsc::{error::SendError, Receiver, Sender};
+use tokio::sync::{
+    mpsc::{error::SendError, Receiver, Sender},
+    oneshot,
+};
 use tokio_xmpp::jid::BareJid;
 use xmpp_parsers::message::Id as MessageId;
 
@@ -48,6 +53,33 @@ pub enum XmppCommand {
     Displayed(MessageId),
     /// Composing notification. Automatically cleared once [`XmppCommand::Message`] is sent.
     Composing,
+    /// Allocate attachment upload slot.
+    AllocateSlot {
+        request: AllocateSlotRequest,
+        response_tx: oneshot::Sender<Result<AllocateSlotResponse, anyhow::Error>>,
+    },
+    /// Send attachment with given URL.
+    Attachment(String),
+}
+
+/// HTTP upload slot allocation request.
+pub struct AllocateSlotRequest {
+    /// File name.
+    pub filename: String,
+    /// File siize in bytes.
+    pub size: usize,
+    /// HTTP Content-Type.
+    pub content_type: String,
+}
+
+/// HTTP upload slot allocation response.
+pub struct AllocateSlotResponse {
+    /// URL for uploading the attachment using PUT request.
+    pub put_url: String,
+    /// Headers to set in PUT request.
+    pub headers: HeaderMap,
+    /// URL for downloading the attachment.
+    pub get_url: String,
 }
 
 /// XMPP attachment.
@@ -124,6 +156,16 @@ impl XmppHandle {
             .await
     }
 
+    /// Send attachment.
+    pub async fn send_attachment(
+        &self,
+        url: String,
+    ) -> Result<(), SendError<(BareJid, XmppCommand)>> {
+        self.tx
+            .send((self.jid.clone(), XmppCommand::Attachment(url)))
+            .await
+    }
+
     /// Download attachment from the message.
     pub async fn download_attachment(
         &self,
@@ -169,6 +211,56 @@ impl XmppHandle {
             Ok((Attachment::Image(encoded_data), size))
         }
     }
+
+    /// Upload image in base64 encoded form to XMPP HTTP upload component. Returns a URL
+    /// for downloading and decoded attachment size.
+    pub async fn upload_image(&self, base64_url: String) -> Result<(String, usize), anyhow::Error> {
+        let (content_type, base64_data) =
+            extract_content_type_and_base64(&base64_url).ok_or(anyhow!("invalid base64 url"))?;
+
+        let filename = match content_type {
+            "image/jpeg" => "image.jpg",
+            "image/png" => "image.png",
+            "image/gif" => "image.gif",
+            "image/webp" => "image.webp",
+            content_type => return Err(anyhow!("unsupported content-type `{content_type}`")),
+        };
+
+        let binary = BASE64_STANDARD
+            .decode(base64_data)
+            .context("invalid base64 data")?;
+        let size = binary.len();
+
+        let (response_tx, rx) = oneshot::channel();
+        self.tx
+            .send((
+                self.jid.clone(),
+                XmppCommand::AllocateSlot {
+                    request: AllocateSlotRequest {
+                        filename: filename.to_string(),
+                        size,
+                        content_type: content_type.to_string(),
+                    },
+                    response_tx,
+                },
+            ))
+            .await?;
+
+        let AllocateSlotResponse {
+            put_url,
+            headers,
+            get_url,
+        } = rx.await??;
+
+        self.client
+            .put(put_url)
+            .headers(headers)
+            .body(binary)
+            .send()
+            .await?;
+
+        Ok((get_url, size))
+    }
 }
 
 impl Stream for XmppHandle {
@@ -177,4 +269,13 @@ impl Stream for XmppHandle {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.as_mut().rx.poll_recv(cx)
     }
+}
+
+fn extract_content_type_and_base64(encoded_data: &str) -> Option<(&str, &str)> {
+    let tail = encoded_data.strip_prefix("data:")?;
+    let index = tail.find(';')?;
+    let (content_type, tail) = tail.split_at(index);
+    let b64_data = tail.strip_prefix(";base64,")?;
+
+    Some((content_type, b64_data))
 }

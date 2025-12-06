@@ -28,6 +28,7 @@ use jutella::{
     ApiOptions, Auth, ChatClient, ChatClientConfig, Completion, Content, ContentPart, FilePart,
     ImagePart, TokenUsage,
 };
+use serde_json::value::Value;
 use std::time::Duration;
 
 // Log target for this file.
@@ -50,6 +51,7 @@ pub struct ChatConfig {
     pub max_history_tokens: usize,
     pub reqwest_client: reqwest::Client,
     pub xmpp_handle: XmppHandle,
+    pub extra_params: Option<serde_json::map::Map<String, Value>>,
 }
 
 /// Single chatbot conversation handler.
@@ -77,6 +79,7 @@ impl Chat {
             max_history_tokens,
             reqwest_client,
             xmpp_handle,
+            extra_params,
         } = config;
 
         let client = ChatClient::new_with_client_and_system_tokens(
@@ -92,6 +95,7 @@ impl Chat {
                 min_history_tokens,
                 max_history_tokens: Some(max_history_tokens),
                 sanitize_links,
+                extra_params,
             },
             reqwest_client,
             system_message_tokens,
@@ -103,6 +107,122 @@ impl Chat {
             xmpp: xmpp_handle,
             pending_attachments: Vec::new(),
         })
+    }
+
+    fn log_response(
+        &self,
+        len: usize,
+        image_sizes: Option<Vec<usize>>,
+        TokenUsage {
+            tokens_in,
+            tokens_in_cached,
+            tokens_out,
+            tokens_reasoning,
+        }: TokenUsage,
+    ) {
+        let tokens_cached = tokens_in_cached.and_then(|v| match v {
+            0 => None,
+            v => Some(v),
+        });
+        let tokens_reasoning = tokens_reasoning.and_then(|v| match v {
+            0 => None,
+            v => Some(v),
+        });
+
+        if let Some(image_sizes) = image_sizes {
+            tracing::debug!(
+                target: LOG_TARGET,
+                jid = self.jid,
+                len,
+                ?image_sizes,
+                tokens_in,
+                tokens_cached,
+                tokens_out,
+                tokens_reasoning,
+                "response with images",
+            );
+        } else {
+            tracing::debug!(
+                target: LOG_TARGET,
+                jid = self.jid,
+                len,
+                tokens_in,
+                tokens_cached,
+                tokens_out,
+                tokens_reasoning,
+                "response",
+            );
+        }
+    }
+
+    async fn handle_completion(
+        &mut self,
+        Completion {
+            response,
+            reasoning: _,
+            token_usage,
+        }: Completion,
+    ) -> anyhow::Result<()> {
+        match response {
+            Content::Text(response) => {
+                self.log_response(response.len(), None, token_usage);
+
+                self.xmpp.send_message(response).await?;
+            }
+            Content::ContentParts(parts) => {
+                let mut len = 0;
+                let mut image_sizes = Vec::new();
+
+                for part in parts {
+                    match part {
+                        ContentPart::Text(text) => {
+                            len += text.len();
+
+                            self.xmpp.send_message(text).await?;
+                        }
+                        ContentPart::Image(ImagePart {
+                            url: base64_url,
+                            detail: _,
+                        }) => match self.xmpp.upload_image(base64_url).await {
+                            Ok((url, size)) => {
+                                image_sizes.push(size);
+
+                                self.xmpp.send_attachment(url).await?;
+                            }
+                            Err(error) => {
+                                tracing::error!(
+                                    target: LOG_TARGET,
+                                    jid = self.jid,
+                                    ?error,
+                                    "attachment upload failure",
+                                );
+
+                                self.xmpp
+                                    .send_message("[ERROR] Failed to upload attachment".to_string())
+                                    .await?;
+                            }
+                        },
+                        ContentPart::File(_) => {
+                            tracing::error!(
+                                target: LOG_TARGET,
+                                jid = self.jid,
+                                "discarding unsupported file content part",
+                            );
+
+                            self.xmpp
+                                .send_message(
+                                    "[ERROR] Unsupported file content discarded".to_string(),
+                                )
+                                .await?;
+                        }
+                    }
+                }
+
+                self.log_response(len, Some(image_sizes), token_usage);
+            }
+        }
+
+        Ok(())
     }
 
     async fn on_xmpp_event(&mut self, event: XmppEvent) -> anyhow::Result<()> {
@@ -117,36 +237,7 @@ impl Chat {
                 self.xmpp.start_composing().await?;
 
                 match self.generate_completion(text).await {
-                    Ok(Completion {
-                        response,
-                        reasoning: _,
-                        token_usage:
-                            TokenUsage {
-                                tokens_in,
-                                tokens_in_cached,
-                                tokens_out,
-                                tokens_reasoning,
-                            },
-                    }) => {
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            jid = self.jid,
-                            len = response.len(),
-                            tokens_in,
-                            tokens_cached = tokens_in_cached.and_then(|v| match v {
-                                0 => None,
-                                v => Some(v),
-                            }),
-                            tokens_out,
-                            tokens_reasoning = tokens_reasoning.and_then(|v| match v {
-                                0 => None,
-                                v => Some(v),
-                            }),
-                            "response"
-                        );
-
-                        self.xmpp.send_message(response).await?;
-                    }
+                    Ok(completion) => self.handle_completion(completion).await?,
                     Err(error) => {
                         tracing::warn!(
                             target: LOG_TARGET,

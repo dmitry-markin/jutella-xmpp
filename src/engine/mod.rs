@@ -32,6 +32,7 @@ use futures::{
     future::{BoxFuture, FutureExt},
     stream::{FuturesUnordered, StreamExt},
 };
+use serde_json::value::Value;
 use std::time::Duration;
 use tokio::sync::mpsc::Receiver;
 
@@ -53,6 +54,7 @@ pub struct Config {
     pub sanitize_links: bool,
     pub min_history_tokens: Option<usize>,
     pub max_history_tokens: usize,
+    pub extra_params: Option<serde_json::map::Map<String, Value>>,
 }
 
 pub struct ChatEngine {
@@ -141,6 +143,7 @@ fn create_chat_handler(
         sanitize_links,
         min_history_tokens,
         max_history_tokens,
+        extra_params,
     }: Config,
     reqwest_client: reqwest::Client,
     xmpp_handle: XmppHandle,
@@ -160,5 +163,6 @@ fn create_chat_handler(
         max_history_tokens,
         reqwest_client,
         xmpp_handle,
+        extra_params,
     })
 }
