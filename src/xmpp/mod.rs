@@ -25,7 +25,7 @@
 use crate::xmpp::handle::{AllocateSlotRequest, AllocateSlotResponse, XmppCommand};
 use anyhow::{anyhow, Context as _};
 use futures::{
-    future::{BoxFuture, Fuse},
+    future::{BoxFuture, Fuse, FusedFuture},
     stream::{BoxStream, FuturesUnordered, StreamExt},
     FutureExt,
 };
@@ -490,7 +490,9 @@ impl Xmpp {
                 // TODO: checking for `self.online` here is a band-aid to reduce the chances of
                 // losing responses. Ideally, we should queue responses and only discard them
                 // once they have been sent out without errors.
-                command = self.from_handles_rx.recv(), if self.online => {
+                command = self.from_handles_rx.recv(),
+                    if self.online && self.upload_component_discovery.is_terminated() =>
+                {
                     if let Some((jid, command)) = command {
                         self.process_command(jid, command).await;
                     } else {
