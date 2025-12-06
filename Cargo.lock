@@ -1106,7 +1106,7 @@ dependencies = [
 [[package]]
 name = "jutella"
 version = "0.7.0"
-source = "git+https://github.com/dmitry-markin/jutella.git#8e3e7eed64c962efcbc31846c242cc23e2029c9d"
+source = "git+https://github.com/dmitry-markin/jutella.git#9984b950fe518324b27750a0e42f8427ccc679b1"
 dependencies = [
  "bytes",
  "eventsource-stream",
