@@ -394,6 +394,9 @@ impl Xmpp {
                 self.discover_upload_component().await;
             }
             Event::Disconnected(error) => {
+                // NOTE: as of tokio-xmpp v5.0.0 this event is never emitted and reconnections are
+                // handled internally by [`XmppClient`].
+
                 // Make sure to not spam with error during every reconnection attemp.
                 if self.online {
                     tracing::error!(
