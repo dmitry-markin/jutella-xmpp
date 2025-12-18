@@ -440,6 +440,10 @@ impl Xmpp {
     async fn send_attachment(&mut self, jid: BareJid, url: String) {
         tracing::trace!(target: LOG_TARGET, jid = jid.as_str(), "sending attachment");
 
+        // If we are sending an attachment, we have finished composing.
+        self.pending_composing.remove(&jid);
+        self.send_chat_state_active(jid.clone()).await;
+
         let message = XmppMessage::new(Some(jid.clone().into()))
             .with_body(Lang::new(), url.clone())
             .with_payload(Oob { url, desc: None });
