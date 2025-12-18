@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2025-12-18
+
+This release adds image editing support with OpenRouter. You should send editing instructions after attaching all source images.
+
+### Added
+
+- Image editing support ([#21](https://github.com/dmitry-markin/jutella-xmpp/pull/21))
+
+### Fixed
+
+- Fix composing notification displayed after attachment-only response ([#22](https://github.com/dmitry-markin/jutella-xmpp/pull/22))
+
 ## [0.3.0] - 2025-12-06
 
 This release brings support for PDF & image attachments. Note that attachments are only sent to the model after receiving a follow-up text instruction. This release also adds initial support for image generation via OpenRouter API.
