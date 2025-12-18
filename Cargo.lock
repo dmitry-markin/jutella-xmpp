@@ -1042,9 +1042,9 @@ dependencies = [
 
 [[package]]
 name = "jutella"
-version = "0.8.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b994b3e3f280f4f6bf1dd7a60e79e24b9a23523f1442bdd769eb576bd4a7b71"
+checksum = "5c28f082acf71f1c5b5b1076ba3f7aa10e55332d623e4a585b7758c300d69237"
 dependencies = [
  "bytes",
  "eventsource-stream",
