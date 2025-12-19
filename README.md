@@ -12,7 +12,7 @@ Supports OpenAI (including Azure auth flavor) and OpenRouter chat completions AP
 2. Rolling context window with min/max token limits (see the config parameters description for details).
 3. Presence, read receipts & composing notifications.
 4. Image & PDF file attachments.
-5. Image generation (only with OpenRouter, no multi-turn editing support).
+5. Image generation & editing (only with OpenRouter, no multi-turn conversations support).
 
 ## Installation
 
