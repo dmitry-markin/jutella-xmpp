@@ -22,7 +22,12 @@
 
 //! Chatbot chat handler.
 
-use crate::xmpp::{Attachment, XmppEvent, XmppHandle};
+use crate::{
+    asr::Asr,
+    xmpp::{Attachment, XmppEvent, XmppHandle},
+};
+use base64::prelude::{Engine as _, BASE64_STANDARD};
+use bytes::Bytes;
 use futures::stream::StreamExt;
 use jutella::{
     ApiOptions, Auth, ChatClient, ChatClientConfig, Completion, Content, ContentPart, FilePart,
@@ -33,6 +38,11 @@ use std::time::Duration;
 
 // Log target for this file.
 const LOG_TARGET: &str = "jutella::chat";
+
+const INVALID_TYPE_ERROR: &str =
+    "[ERROR] Only pdf, jpeg, png, webp, non-animated gif, wav, mp3 & m4a attachments supported";
+const INVALID_TYPE_ERROR_NO_AUDIO: &str =
+    "[ERROR] Only pdf, jpeg, png, webp & non-animated gif attachments supported";
 
 /// Configuration of [`Chat`]
 // Can't implement `Debug` due to `tiktoken_rs::CoreBPE` not implementing it.
@@ -52,6 +62,7 @@ pub struct ChatConfig {
     pub reqwest_client: reqwest::Client,
     pub xmpp_handle: XmppHandle,
     pub extra_params: Option<serde_json::map::Map<String, Value>>,
+    pub asr: Option<Asr>,
 }
 
 /// Single chatbot conversation handler.
@@ -60,6 +71,7 @@ pub struct Chat {
     client: ChatClient,
     xmpp: XmppHandle,
     pending_attachments: Vec<ContentPart>,
+    asr: Option<Asr>,
 }
 
 impl Chat {
@@ -80,6 +92,7 @@ impl Chat {
             reqwest_client,
             xmpp_handle,
             extra_params,
+            asr,
         } = config;
 
         let client = ChatClient::new_with_client_and_system_tokens(
@@ -106,6 +119,7 @@ impl Chat {
             client,
             xmpp: xmpp_handle,
             pending_attachments: Vec::new(),
+            asr,
         })
     }
 
@@ -225,6 +239,25 @@ impl Chat {
         Ok(())
     }
 
+    async fn handle_text_prompt(&mut self, text: String) -> anyhow::Result<()> {
+        self.xmpp.start_composing().await?;
+
+        match self.generate_completion(text).await {
+            Ok(completion) => self.handle_completion(completion).await?,
+            Err(error) => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    jid = self.jid,
+                    "error from chatbot API: {error}",
+                );
+
+                self.xmpp.send_message(format!("[ERROR] {error}")).await?;
+            }
+        }
+
+        Ok(())
+    }
+
     async fn on_xmpp_event(&mut self, event: XmppEvent) -> anyhow::Result<()> {
         match event {
             XmppEvent::Message { text, id } => {
@@ -234,41 +267,119 @@ impl Chat {
                     self.xmpp.displayed(id).await?;
                 }
 
-                self.xmpp.start_composing().await?;
-
-                match self.generate_completion(text).await {
-                    Ok(completion) => self.handle_completion(completion).await?,
-                    Err(error) => {
-                        tracing::warn!(
-                            target: LOG_TARGET,
-                            jid = self.jid,
-                            "error from chatbot API: {error}",
-                        );
-
-                        self.xmpp.send_message(format!("[ERROR] {error}")).await?;
-                    }
-                }
+                self.handle_text_prompt(text).await?;
             }
+            // TODO: we might want to skip downloading an attachment if the file extension is not
+            // supported.
             XmppEvent::Attachment { url, id } => match self.xmpp.download_attachment(url).await {
-                Ok((attachment, size)) => {
-                    tracing::debug!(target: LOG_TARGET, jid = self.jid, size, "attachment");
+                Ok(Attachment {
+                    content_type,
+                    filename,
+                    data,
+                }) => {
+                    let attachment_type = AttachmentType::from_content_type(&content_type);
+
+                    match attachment_type {
+                        AttachmentType::Image | AttachmentType::Pdf => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                jid = self.jid,
+                                size = data.len(),
+                                "attachment",
+                            );
+                        }
+                        AttachmentType::Other => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                jid = self.jid,
+                                size = data.len(),
+                                content_type,
+                                "attachment ignored, content-type not supported",
+                            );
+                        }
+                        AttachmentType::Audio => {
+                            // Will be logged below depending on ASR status.
+                        }
+                    }
 
                     if let Some(id) = id {
                         self.xmpp.displayed(id).await?;
                     }
 
-                    let content_part = match attachment {
-                        Attachment::Image(base64_string) => ContentPart::Image(ImagePart {
-                            url: base64_string,
-                            detail: None,
-                        }),
-                        Attachment::Pdf { filename, data } => ContentPart::File(FilePart {
-                            file_data: data,
-                            filename: Some(filename),
-                        }),
-                    };
+                    match attachment_type {
+                        AttachmentType::Image => {
+                            self.pending_attachments.push(ContentPart::Image(ImagePart {
+                                url: url_base64_encode(&content_type, data),
+                                detail: None,
+                            }));
+                        }
+                        AttachmentType::Pdf => {
+                            self.pending_attachments.push(ContentPart::File(FilePart {
+                                file_data: url_base64_encode(&content_type, data),
+                                filename: Some(filename),
+                            }));
+                        }
+                        AttachmentType::Audio => {
+                            let audio_size = data.len();
 
-                    self.pending_attachments.push(content_part);
+                            if let Some(ref asr) = self.asr {
+                                match asr.transcribe(filename, data).await {
+                                    Ok(text) => {
+                                        tracing::debug!(
+                                            target: LOG_TARGET,
+                                            jid = self.jid,
+                                            len = text.len(),
+                                            audio_size,
+                                            "voice request",
+                                        );
+
+                                        let quotation = "> ".to_string() + &text;
+                                        self.xmpp.send_message(quotation).await?;
+
+                                        self.handle_text_prompt(text).await?;
+                                    }
+                                    Err(error) => {
+                                        tracing::warn!(
+                                            target: LOG_TARGET,
+                                            jid = self.jid,
+                                            content_type,
+                                            audio_size,
+                                            ?error,
+                                            "speech recognition error",
+                                        );
+
+                                        self.xmpp
+                                            .send_message(format!(
+                                                "[ERROR] Speech recognition error: {error}"
+                                            ))
+                                            .await?;
+                                    }
+                                }
+                            } else {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    jid = self.jid,
+                                    audio_size,
+                                    "voice request ignored, ASR not enabled",
+                                );
+
+                                self.xmpp
+                                    .send_message(
+                                        "[ERROR] Speech recognition not enabled".to_string(),
+                                    )
+                                    .await?;
+                            }
+                        }
+                        AttachmentType::Other => {
+                            let error_message = if self.asr.is_some() {
+                                INVALID_TYPE_ERROR
+                            } else {
+                                INVALID_TYPE_ERROR_NO_AUDIO
+                            };
+
+                            self.xmpp.send_message(error_message.to_string()).await?;
+                        }
+                    }
                 }
                 Err(error) => {
                     tracing::debug!(
@@ -278,13 +389,9 @@ impl Chat {
                         "failed to download attachment",
                     );
 
-                    let error_message = if error.is_invalid_type() {
-                        "[ERROR] Only PDF, JPEG, PNG, WEBP & non-animated GIF files are supported"
-                    } else {
-                        "[ERROR] Failed to download attachment"
-                    };
-
-                    self.xmpp.send_message(error_message.to_string()).await?;
+                    self.xmpp
+                        .send_message("[ERROR] Failed to download attachment".to_string())
+                        .await?;
                 }
             },
         }
@@ -314,4 +421,30 @@ impl Chat {
             }
         }
     }
+}
+
+enum AttachmentType {
+    Image,
+    Pdf,
+    Audio,
+    Other,
+}
+
+impl AttachmentType {
+    fn from_content_type(content_type: &str) -> AttachmentType {
+        match content_type {
+            "image/jpeg" | "image/png" | "image/gif" | "image/webp" => AttachmentType::Image,
+            "application/pdf" => AttachmentType::Pdf,
+            "audio/mp4"     // .m4a
+            | "audio/mpeg"  // .mp3
+            | "audio/wav" => AttachmentType::Audio,
+            _ => AttachmentType::Other,
+        }
+    }
+}
+
+fn url_base64_encode(content_type: &str, data: Bytes) -> String {
+    let base64 = BASE64_STANDARD.encode(data);
+
+    format!("data:{content_type};base64,{base64}")
 }

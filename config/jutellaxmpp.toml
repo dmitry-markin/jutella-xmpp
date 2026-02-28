@@ -23,7 +23,7 @@ api_url = "https://api.openai.com/v1/"
 # Auth header `Authorization: Bearer {api_token}`. Used by OpenAI endpoints.
 api_token = "<API token>"
 
-# HTTP request timeout in seconds. 5 mins by default.
+# HTTP request timeout in seconds. Also used for speech recognition requests. 5 mins by default.
 #http_timeout = 300
 
 # Model to use.
@@ -76,3 +76,13 @@ max_history_tokens = 2500
 
 # Extra parameters appended as is to the response, in JSON format.
 #extra_params_json = '{ "image_config": { "aspect_ratio": "3:2" } }'
+
+# Optional OpenAI-compatible speech recognition base URL to handle voice messages.
+# Everything before `audio/transcriptions`.
+#asr_url = "http://127.0.0.1:5092/v1/"
+
+# Speech recognition auth token, if required.
+#asr_token = "<API token>"
+
+# Speech recognition model, if required.
+#asr_model = "parakeet-tdt-0.6b-v3"

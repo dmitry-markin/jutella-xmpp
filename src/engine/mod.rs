@@ -25,6 +25,7 @@
 mod chat;
 
 use crate::{
+    asr::Asr,
     engine::chat::{Chat, ChatConfig},
     xmpp::XmppHandle,
 };
@@ -55,6 +56,7 @@ pub struct Config {
     pub min_history_tokens: Option<usize>,
     pub max_history_tokens: usize,
     pub extra_params: Option<serde_json::map::Map<String, Value>>,
+    pub asr: Option<Asr>,
 }
 
 pub struct ChatEngine {
@@ -144,6 +146,7 @@ fn create_chat_handler(
         min_history_tokens,
         max_history_tokens,
         extra_params,
+        asr,
     }: Config,
     reqwest_client: reqwest::Client,
     xmpp_handle: XmppHandle,
@@ -164,5 +167,6 @@ fn create_chat_handler(
         reqwest_client,
         xmpp_handle,
         extra_params,
+        asr,
     })
 }

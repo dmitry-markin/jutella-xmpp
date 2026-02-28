@@ -28,6 +28,7 @@ mod engine;
 mod xmpp;
 
 use crate::{
+    asr::{Asr, AsrConfig},
     config::Config,
     engine::{ChatEngine, Config as ChatEngineConfig},
     xmpp::{Config as XmppConfig, Xmpp},
@@ -65,6 +66,9 @@ async fn main() -> anyhow::Result<()> {
         min_history_tokens,
         max_history_tokens,
         extra_params,
+        asr_url,
+        asr_token,
+        asr_model,
     } = Config::load().context("Failed to load config")?;
 
     tracing::info!(
@@ -107,6 +111,17 @@ async fn main() -> anyhow::Result<()> {
         allowed_jids: allowed_users,
     })?;
 
+    let asr = if let Some(asr_url) = asr_url {
+        Some(Asr::new(AsrConfig {
+            api_url: asr_url,
+            api_token: asr_token,
+            model: asr_model,
+            timeout: Some(http_timeout.clone()),
+        })?)
+    } else {
+        None
+    };
+
     let chat_engine = ChatEngine::new(
         ChatEngineConfig {
             api_url,
@@ -122,6 +137,7 @@ async fn main() -> anyhow::Result<()> {
             min_history_tokens,
             max_history_tokens,
             extra_params,
+            asr,
         },
         new_chats_rx,
     )

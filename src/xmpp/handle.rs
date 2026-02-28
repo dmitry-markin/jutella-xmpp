@@ -24,6 +24,7 @@
 
 use anyhow::{anyhow, Context as _};
 use base64::prelude::{Engine, BASE64_STANDARD};
+use bytes::Bytes;
 use futures::{
     stream::Stream,
     task::{Context, Poll},
@@ -84,34 +85,23 @@ pub struct AllocateSlotResponse {
 
 /// XMPP attachment.
 #[derive(Clone)]
-pub enum Attachment {
-    /// Image attachment in base64 encoding.
-    Image(String),
-    /// PDF attachment.
-    Pdf {
-        /// File name passed to the model.
-        filename: String,
-        /// Base64-encoded file content.
-        data: String,
-    },
+pub struct Attachment {
+    /// Content-type.
+    pub content_type: String,
+    /// File name.
+    pub filename: String,
+    /// File contents.
+    pub data: Bytes,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum DownloadError {
     #[error("HTTP request error: {0}")]
     Request(#[from] reqwest::Error),
-    #[error("unknown MIME-type")]
-    UnknownMimeType,
-    #[error("unsupported MIME-type {0}")]
-    UnsupportedMimeType(String),
-    #[error("{0}")]
-    OtherError(&'static str),
-}
-
-impl DownloadError {
-    pub fn is_invalid_type(&self) -> bool {
-        matches!(self, Self::UnknownMimeType | Self::UnsupportedMimeType(_))
-    }
+    #[error("unknown content-type")]
+    UnknownContentType,
+    #[error("empty URL")]
+    EmptyUrl,
 }
 
 /// Handle of XMPP chat with a specific user.
@@ -167,49 +157,29 @@ impl XmppHandle {
     }
 
     /// Download attachment from the message.
-    pub async fn download_attachment(
-        &self,
-        url: String,
-    ) -> Result<(Attachment, usize), DownloadError> {
-        use DownloadError::{OtherError, UnknownMimeType, UnsupportedMimeType};
-
+    pub async fn download_attachment(&self, url: String) -> Result<Attachment, DownloadError> {
         let filename = match url.split('/').next_back() {
             Some(filename) => filename.to_owned(),
-            None => return Err(OtherError("empty URL")),
+            None => return Err(DownloadError::EmptyUrl),
         };
 
         let response = self.client.get(url).send().await?;
-        let Some(mime_type) = response
+        let Some(content_type) = response
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|h| h.to_str().ok())
         else {
-            return Err(UnknownMimeType);
+            return Err(DownloadError::UnknownContentType);
         };
 
-        let is_pdf = match mime_type {
-            "application/pdf" => true,
-            "image/jpeg" | "image/png" | "image/gif" | "image/webp" => false,
-            mime_type => return Err(UnsupportedMimeType(mime_type.to_string())),
-        };
+        let content_type = content_type.to_owned();
+        let data = response.bytes().await?;
 
-        let mime_type = mime_type.to_owned();
-        let bytes = response.bytes().await?;
-        let size = bytes.len();
-        let base64_string = BASE64_STANDARD.encode(bytes);
-        let encoded_data = format!("data:{mime_type};base64,{base64_string}");
-
-        if is_pdf {
-            Ok((
-                Attachment::Pdf {
-                    filename: filename.to_owned(),
-                    data: encoded_data,
-                },
-                size,
-            ))
-        } else {
-            Ok((Attachment::Image(encoded_data), size))
-        }
+        Ok(Attachment {
+            content_type,
+            filename,
+            data,
+        })
     }
 
     /// Upload image in base64 encoded form to XMPP HTTP upload component. Returns a URL

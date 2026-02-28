@@ -26,7 +26,7 @@ use bytes::Bytes;
 use reqwest::{
     header::{HeaderValue, InvalidHeaderValue, AUTHORIZATION},
     multipart::{Form, Part},
-    Url,
+    StatusCode, Url,
 };
 use std::time::Duration;
 
@@ -46,7 +46,7 @@ pub struct AsrConfig {
 }
 
 /// Speech recognition using OpenAI-compatible API endpoint.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Asr {
     client: reqwest::Client,
     endpoint: Url,
@@ -69,6 +69,8 @@ pub enum NewAsrError {
 pub enum TranscribeError {
     #[error("HTTP request failed")]
     RequestFailed(#[from] reqwest::Error),
+    #[error("Transcription service error")]
+    HttpApiError { status: StatusCode, body: String },
 }
 
 impl Asr {
@@ -93,16 +95,17 @@ impl Asr {
         } else {
             client_builder
         };
-
         let client_builder = if let Some(timeout) = timeout {
             client_builder.timeout(timeout)
         } else {
             client_builder
         };
 
+        let url = ensure_trailing_slash(api_url);
+
         Ok(Asr {
             client: client_builder.build()?,
-            endpoint: Url::parse(&format!("{api_url}{TRANSCRIPTIONS_ENDPOINT}"))?,
+            endpoint: Url::parse(&format!("{url}{TRANSCRIPTIONS_ENDPOINT}"))?,
             model,
         })
     }
@@ -120,15 +123,28 @@ impl Asr {
         };
         let form = form.part("file", Part::bytes(Vec::from(data)).file_name(filename));
 
-        let transcription = self
+        let response = self
             .client
             .post(self.endpoint.clone())
             .multipart(form)
             .send()
-            .await?
-            .text()
             .await?;
 
-        Ok(transcription)
+        let status = response.status();
+        let body = response.text().await?;
+
+        if status.is_success() {
+            Ok(body)
+        } else {
+            Err(TranscribeError::HttpApiError { status, body })
+        }
+    }
+}
+
+fn ensure_trailing_slash(url: String) -> String {
+    if url.ends_with('/') {
+        url
+    } else {
+        url + "/"
     }
 }

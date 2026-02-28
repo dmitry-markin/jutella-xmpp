@@ -13,6 +13,7 @@ Supports OpenAI (including Azure auth flavor) and OpenRouter chat completions AP
 3. Presence, read receipts & composing notifications.
 4. Image & PDF file attachments.
 5. Image generation & editing (only with OpenRouter, no multi-turn conversations support).
+6. Voice message recognition.
 
 ## Installation
 
