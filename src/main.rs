@@ -22,6 +22,7 @@
 
 //! `jutella-xmpp`: XMPP – OpenAI API bridge.
 
+mod asr;
 mod config;
 mod engine;
 mod xmpp;

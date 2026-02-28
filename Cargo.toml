@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.100"
+bytes = "1.11.0"
 jutella = { version = "0.8.1", default-features = false }
 clap = { version = "4.5.51", features = ["derive", "wrap_help"] }
 serde = { version = "1.0.228", features = ["derive"] }
@@ -24,7 +25,7 @@ tokio-xmpp = "5.0.0"
 xmpp-parsers = "0.22.0"
 rustls = "0.23.34"
 futures = "0.3.31"
-reqwest = { version = "0.12.24", default-features = false, features = ["gzip", "json", "hickory-dns", "http2", "rustls-tls", "zstd" ] }
+reqwest = { version = "0.12.24", default-features = false, features = ["gzip", "json", "hickory-dns", "http2", "multipart", "rustls-tls", "zstd" ] }
 tokio-stream = "0.1.17"
 tiktoken-rs = "0.7.0"
 wildmatch = "2.5.0"
@@ -32,3 +33,4 @@ base64 = "0.22.1"
 thiserror = "2.0.17"
 rxml = "0.13.3"
 serde_json = "1.0.145"
+url = "2.5.7"
