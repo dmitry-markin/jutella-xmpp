@@ -61,6 +61,9 @@ struct ConfigFile {
     openrouter_pdf_engine: Option<String>,
     image_generation: Option<bool>,
     extra_params_json: Option<String>,
+    asr_url: Option<String>,
+    asr_token: Option<String>,
+    asr_model: Option<String>,
 }
 
 impl ConfigFile {
@@ -94,6 +97,9 @@ pub struct Config {
     pub min_history_tokens: Option<usize>,
     pub max_history_tokens: usize,
     pub extra_params: Option<serde_json::map::Map<String, Value>>,
+    pub asr_url: Option<String>,
+    pub asr_token: Option<String>,
+    pub asr_model: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -139,6 +145,9 @@ impl Config {
             openrouter_pdf_engine: pdf_engine,
             image_generation,
             extra_params_json,
+            asr_url,
+            asr_token,
+            asr_model,
         } = ConfigFile::load(config)?;
 
         let auth_jid = BareJid::new(&jid).context("Invalid auth JID")?;
@@ -220,6 +229,9 @@ impl Config {
             min_history_tokens,
             max_history_tokens,
             extra_params,
+            asr_url,
+            asr_token,
+            asr_model,
         })
     }
 }
