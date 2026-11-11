@@ -11,26 +11,26 @@ name = "jutellaxmpp"
 path = "src/main.rs"
 
 [dependencies]
-anyhow = "1.0.100"
-bytes = "1.11.0"
-jutella = { git = "https://github.com/dmitry-markin/jutella.git", default-features = false }
-clap = { version = "4.5.51", features = ["derive", "wrap_help"] }
-serde = { version = "1.0.228", features = ["derive"] }
-tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread"] }
-toml = "0.9.8"
-tracing = "0.1.41"
+anyhow = "1.0.104"
+bytes = "1.12.1"
+jutella = { git = "https://github.com/dmitry-markin/jutella.git", branch = "update-deps", default-features = false }
+clap = { version = "4.6.7", features = ["derive", "wrap_help"] }
+serde = { version = "1.0.229", features = ["derive"] }
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread"] }
+toml = "1.2.1"
+tracing = "0.1.44"
 tracing-log = "0.2.0"
-tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
-tokio-xmpp = "5.0.0"
-xmpp-parsers = "0.22.0"
-rustls = "0.23.34"
-futures = "0.3.31"
-reqwest = { version = "0.12.24", default-features = false, features = ["gzip", "json", "hickory-dns", "http2", "multipart", "rustls-tls", "zstd" ] }
-tokio-stream = "0.1.17"
-tiktoken-rs = "0.7.0"
-wildmatch = "2.5.0"
-base64 = "0.22.1"
-thiserror = "2.0.17"
-rxml = "0.13.3"
-serde_json = "1.0.145"
-url = "2.5.7"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tokio-xmpp = "6.0.0"
+xmpp-parsers = "0.23.0"
+rustls = "0.23.46"
+futures = "0.3.34"
+reqwest = { version = "0.13.5", default-features = false, features = ["gzip", "json", "hickory-dns", "http2", "multipart", "rustls", "zstd" ] }
+tokio-stream = "0.1.19"
+tiktoken-rs = "0.12.1"
+wildmatch = "2.7.0"
+base64 = "0.23.1"
+thiserror = "2.0.21"
+rxml = "0.14.0"
+serde_json = "1.0.154"
+url = "2.5.8"
