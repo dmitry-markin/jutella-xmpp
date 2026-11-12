@@ -6,6 +6,10 @@ XMPP LLM bridge based on [tokio-xmpp](https://docs.rs/tokio-xmpp/latest/tokio_xm
 
 Supports OpenAI (including Azure auth flavor) and OpenRouter chat completions API.
 
+<p align="center">
+  <img src="doc/jutella-conversations.webp" width="300" height="366" alt="Chat with Jutella in Conversations">
+</p>
+
 ## Features
 
 1. Allowlist of user JIDs with wildcards.
