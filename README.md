@@ -48,5 +48,4 @@ sudo useradd --system --shell /sbin/nologin --home-dir /nonexistent jutella
 ### Install the systemd service
 
 1. Copy systemd [service](https://github.com/dmitry-markin/jutella-xmpp/blob/master/systemd/jutellaxmpp.service) to `/etc/systemd/system`.
-2. Enable it to run on system startup: `sudo systemctl enable jutellaxmpp.service`.
-3. Start the service: `sudo systemctl start jutellaxmpp.service`.
+2. Start the service and enable it to run on system startup: `sudo systemctl enable --now jutellaxmpp.service`.
