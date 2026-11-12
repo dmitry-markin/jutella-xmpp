@@ -7,7 +7,7 @@ XMPP bridge to LLM APIs based on [tokio-xmpp](https://docs.rs/tokio-xmpp/latest/
 Supports the OpenAI chat completions API (including Azure-style authentication) and the OpenRouter chat completions API.
 
 <p align="center">
-  <img src="doc/jutella-conversations.webp" width="300" height="366" alt="Chat with Jutella in Conversations">
+  <img src="doc/jutella-conversations.webp" width="400" height="487" alt="Chat with Jutella in Conversations">
 </p>
 
 ## Features
