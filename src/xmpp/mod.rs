@@ -619,11 +619,7 @@ async fn discover_http_upload_component(iq: IqRequestor, auth_jid: BareJid) -> a
             }
         };
 
-        if disco
-            .features
-            .iter()
-            .any(|f| f.var == "urn:xmpp:http:upload:0")
-        {
+        if disco.features.contains("urn:xmpp:http:upload:0") {
             upload_component_jid = Some(item.jid);
             break;
         }
